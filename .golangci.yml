@@ -32,8 +32,3 @@ linters:
 
 run:
   timeout: 5m
-
-issues:
-  exclude-use-default: false
-  max-issues-per-linter: 0
-  max-same-issues: 0
