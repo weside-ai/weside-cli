@@ -28,6 +28,11 @@ func NewStorage() *Storage {
 	}
 }
 
+// SetFilePath overrides the storage file path (for testing).
+func (s *Storage) SetFilePath(path string) {
+	s.filePath = path
+}
+
 // Save stores tokens to the filesystem.
 func (s *Storage) Save(tokens *Tokens) error {
 	dir := filepath.Dir(s.filePath)
