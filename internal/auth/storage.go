@@ -1,3 +1,4 @@
+// Package auth handles authentication token storage and retrieval.
 package auth
 
 import (
@@ -6,11 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-)
-
-const (
-	serviceName = "weside-cli"
-	tokenKey    = "access_token"
 )
 
 // Tokens holds the stored authentication tokens.

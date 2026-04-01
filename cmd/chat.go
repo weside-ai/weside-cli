@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,11 +16,11 @@ import (
 )
 
 var (
-	chatMessage  string
-	chatStream   bool
+	chatMessage   string
+	chatStream    bool
 	chatNewThread bool
-	chatThreadID string
-	chatFile     string
+	chatThreadID  string
+	chatFile      string
 )
 
 var chatCmd = &cobra.Command{
@@ -63,9 +64,10 @@ Examples:
 		}
 
 		// Build request body
+		companionIDInt, _ := strconv.Atoi(companionID)
 		body := map[string]any{
-			"companion_id": companionID,
-			"text":         message,
+			"companion_id": companionIDInt,
+			"content":      message,
 			"stream":       chatStream,
 		}
 		if chatNewThread {
@@ -134,7 +136,10 @@ func getMessage() (string, error) {
 	return "", nil
 }
 
-func sendNonStreaming(client interface{ Post(ctx context.Context, path string, body any, result any) error }, body map[string]any) error {
+func sendNonStreaming(client interface {
+	Post(ctx context.Context, path string, body any, result any) error
+}, body map[string]any,
+) error {
 	var result map[string]any
 	if err := client.Post(context.Background(), "/chat/send", body, &result); err != nil {
 		return fmt.Errorf("sending message: %w", err)
@@ -145,20 +150,30 @@ func sendNonStreaming(client interface{ Post(ctx context.Context, path string, b
 		return nil
 	}
 
-	if text, ok := result["text"].(string); ok {
-		fmt.Println(text)
+	// Response: assistant_message.content is [{type: "text", text: "..."}]
+	if msg, ok := result["assistant_message"].(map[string]any); ok {
+		if content, ok := msg["content"].([]any); ok {
+			for _, block := range content {
+				if b, ok := block.(map[string]any); ok {
+					if text, ok := b["text"].(string); ok {
+						fmt.Println(text)
+					}
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func sendStreaming(client interface {
 	DoRaw(ctx context.Context, method, path string, body any) (*http.Response, error)
-}, body map[string]any) error {
+}, body map[string]any,
+) error {
 	resp, err := client.DoRaw(context.Background(), http.MethodPost, "/chat/send", body)
 	if err != nil {
 		return fmt.Errorf("sending message: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {

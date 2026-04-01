@@ -84,7 +84,7 @@ var authTokenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprint(os.Stdout, token)
+		_, _ = fmt.Fprint(os.Stdout, token)
 		return nil
 	},
 }

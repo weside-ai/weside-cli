@@ -88,7 +88,6 @@ func TestClientPost(t *testing.T) {
 	body := map[string]string{"name": "test"}
 	var result map[string]any
 	err := client.Post(context.Background(), "/test", body, &result)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,25 +96,25 @@ func TestClientPost(t *testing.T) {
 	}
 }
 
-func TestAPIErrorMessage(t *testing.T) {
+func TestErrorMessage(t *testing.T) {
 	tests := []struct {
 		name string
-		err  api.APIError
+		err  api.Error
 		want string
 	}{
 		{
 			name: "with detail",
-			err:  api.APIError{StatusCode: 404, Detail: "not found"},
+			err:  api.Error{StatusCode: 404, Detail: "not found"},
 			want: "API error 404: not found",
 		},
 		{
 			name: "with message",
-			err:  api.APIError{StatusCode: 500, Message: "server error"},
+			err:  api.Error{StatusCode: 500, Message: "server error"},
 			want: "API error 500: server error",
 		},
 		{
 			name: "with status only",
-			err:  api.APIError{StatusCode: 403, Status: "403 Forbidden"},
+			err:  api.Error{StatusCode: 403, Status: "403 Forbidden"},
 			want: "API error 403: 403 Forbidden",
 		},
 	}

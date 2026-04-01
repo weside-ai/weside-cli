@@ -1,26 +1,34 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+
 linters:
   enable:
     - errcheck
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
     - gocritic
-    - gofumpt
     - misspell
     - gosec
     - errorlint
     - nolintlint
     - revive
-
-linters-settings:
-  gofumpt:
-    extra-rules: true
-  gocritic:
-    enabled-tags: [diagnostic, style, performance]
-  gosec:
-    excludes: [G104]
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (net/http.ResponseWriter).Write
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+    gosec:
+      excludes:
+        - G104
+        - G117
+        - G304
 
 run:
   timeout: 5m

@@ -29,10 +29,7 @@ var threadsListCmd = &cobra.Command{
 			path += "?companion_id=" + threadCompanionFilter
 		}
 
-		var result struct {
-			Items []map[string]any `json:"items"`
-			Total int              `json:"total"`
-		}
+		var result map[string]any
 		if err := client.Get(context.Background(), path, &result); err != nil {
 			return fmt.Errorf("listing threads: %w", err)
 		}
@@ -42,9 +39,13 @@ var threadsListCmd = &cobra.Command{
 			return nil
 		}
 
+		threads, _ := result["threads"].([]any)
+		total := result["total"]
+
 		headers := []string{"THREAD ID", "COMPANION", "LAST MESSAGE", "CREATED"}
 		var rows [][]string
-		for _, t := range result.Items {
+		for _, item := range threads {
+			t, _ := item.(map[string]any)
 			id := fmt.Sprintf("%v", t["id"])
 			companion := fmt.Sprintf("%v", t["companion_name"])
 			lastMsg := truncate(fmt.Sprintf("%v", t["last_message_preview"]), 40)
@@ -53,7 +54,7 @@ var threadsListCmd = &cobra.Command{
 		}
 
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%d thread(s)\n", result.Total)
+		fmt.Printf("\n%v thread(s)\n", total)
 		return nil
 	},
 }
@@ -68,9 +69,7 @@ var threadsShowCmd = &cobra.Command{
 			return err
 		}
 
-		var result struct {
-			Items []map[string]any `json:"items"`
-		}
+		var result map[string]any
 		if err := client.Get(context.Background(), "/chat/threads/"+args[0]+"/messages", &result); err != nil {
 			return fmt.Errorf("getting thread messages: %w", err)
 		}
@@ -80,14 +79,24 @@ var threadsShowCmd = &cobra.Command{
 			return nil
 		}
 
-		for _, msg := range result.Items {
+		messages, _ := result["messages"].([]any)
+		for _, item := range messages {
+			msg, _ := item.(map[string]any)
 			role := fmt.Sprintf("%v", msg["role"])
-			text := fmt.Sprintf("%v", msg["text"])
 			prefix := "You"
 			if role == "assistant" {
 				prefix = "Companion"
 			}
-			fmt.Printf("[%s] %s\n\n", prefix, text)
+			// Content is [{type: "text", text: "..."}]
+			if content, ok := msg["content"].([]any); ok {
+				for _, block := range content {
+					if b, ok := block.(map[string]any); ok {
+						if text, ok := b["text"].(string); ok {
+							fmt.Printf("[%s] %s\n\n", prefix, text)
+						}
+					}
+				}
+			}
 		}
 		return nil
 	},

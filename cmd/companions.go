@@ -27,10 +27,7 @@ var companionsListCmd = &cobra.Command{
 			return err
 		}
 
-		var result struct {
-			Items []map[string]any `json:"items"`
-			Total int              `json:"total"`
-		}
+		var result map[string]any
 		if err := client.Get(context.Background(), "/companions", &result); err != nil {
 			return fmt.Errorf("listing companions: %w", err)
 		}
@@ -40,11 +37,15 @@ var companionsListCmd = &cobra.Command{
 			return nil
 		}
 
+		companions, _ := result["companions"].([]any)
+		total := result["total"]
+
 		defaultComp := config.GetDefaultCompanion()
 
 		headers := []string{"ID", "NAME", "PERSONALITY", "DEFAULT"}
 		var rows [][]string
-		for _, c := range result.Items {
+		for _, item := range companions {
+			c, _ := item.(map[string]any)
 			id := fmt.Sprintf("%v", c["id"])
 			name := fmt.Sprintf("%v", c["name"])
 			personality := truncate(fmt.Sprintf("%v", c["personality"]), 40)
@@ -56,7 +57,7 @@ var companionsListCmd = &cobra.Command{
 		}
 
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%d companion(s)\n", result.Total)
+		fmt.Printf("\n%v companion(s)\n", total)
 		return nil
 	},
 }
@@ -145,16 +146,16 @@ var companionsSelectCmd = &cobra.Command{
 			return err
 		}
 
-		var result struct {
-			Items []map[string]any `json:"items"`
-		}
-		if err := client.Get(context.Background(), "/companions", &result); err != nil {
+		var listResult map[string]any
+		if err := client.Get(context.Background(), "/companions", &listResult); err != nil {
 			return fmt.Errorf("listing companions: %w", err)
 		}
+		companions, _ := listResult["companions"].([]any)
 
 		found := false
 		var foundID string
-		for _, c := range result.Items {
+		for _, item := range companions {
+			c, _ := item.(map[string]any)
 			if fmt.Sprintf("%v", c["name"]) == name {
 				found = true
 				foundID = fmt.Sprintf("%v", c["id"])
@@ -164,7 +165,8 @@ var companionsSelectCmd = &cobra.Command{
 
 		if !found {
 			// Try by ID
-			for _, c := range result.Items {
+			for _, item := range companions {
+				c, _ := item.(map[string]any)
 				if fmt.Sprintf("%v", c["id"]) == name {
 					found = true
 					foundID = name
@@ -211,14 +213,14 @@ func resolveCompanionID(client *api.Client, nameOrID string) (string, error) {
 	}
 
 	// Otherwise, look up by name
-	var result struct {
-		Items []map[string]any `json:"items"`
-	}
+	var result map[string]any
 	if err := client.Get(context.Background(), "/companions", &result); err != nil {
 		return "", fmt.Errorf("listing companions: %w", err)
 	}
+	companions, _ := result["companions"].([]any)
 
-	for _, c := range result.Items {
+	for _, item := range companions {
+		c, _ := item.(map[string]any)
 		if fmt.Sprintf("%v", c["name"]) == nameOrID {
 			return fmt.Sprintf("%v", c["id"]), nil
 		}

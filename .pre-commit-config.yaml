@@ -3,7 +3,6 @@ repos:
     rev: v1.0.0-rc.1
     hooks:
       - id: go-fumpt
-      - id: golangci-lint
       - id: go-build-repo-mod
       - id: go-test-repo-mod
 
@@ -20,3 +19,7 @@ repos:
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
+
+# Note: golangci-lint is NOT in pre-commit because it runs per-file
+# which causes typecheck errors (can't resolve cross-file references).
+# Lint is enforced via: make lint (local) + CI workflow (remote).

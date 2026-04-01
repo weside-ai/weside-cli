@@ -1,3 +1,4 @@
+// Package api provides the HTTP client for the weside.ai REST API.
 package api
 
 import (
@@ -29,15 +30,15 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
-// APIError represents an error response from the API.
-type APIError struct {
+// Error represents an error response from the API.
+type Error struct {
 	StatusCode int
 	Status     string
 	Detail     string `json:"detail"`
 	Message    string `json:"message"`
 }
 
-func (e *APIError) Error() string {
+func (e *Error) Error() string {
 	if e.Detail != "" {
 		return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Detail)
 	}
@@ -47,7 +48,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Status)
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body any, result any) error {
+func (c *Client) do(ctx context.Context, method, path string, body, result any) error {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -73,10 +74,10 @@ func (c *Client) do(ctx context.Context, method, path string, body any, result a
 	if err != nil {
 		return fmt.Errorf("sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		var apiErr APIError
+		var apiErr Error
 		apiErr.StatusCode = resp.StatusCode
 		apiErr.Status = resp.Status
 		if decErr := json.NewDecoder(resp.Body).Decode(&apiErr); decErr != nil {
@@ -100,17 +101,17 @@ func (c *Client) Get(ctx context.Context, path string, result any) error {
 }
 
 // Post sends a POST request.
-func (c *Client) Post(ctx context.Context, path string, body any, result any) error {
+func (c *Client) Post(ctx context.Context, path string, body, result any) error {
 	return c.do(ctx, http.MethodPost, path, body, result)
 }
 
 // Put sends a PUT request.
-func (c *Client) Put(ctx context.Context, path string, body any, result any) error {
+func (c *Client) Put(ctx context.Context, path string, body, result any) error {
 	return c.do(ctx, http.MethodPut, path, body, result)
 }
 
 // Patch sends a PATCH request.
-func (c *Client) Patch(ctx context.Context, path string, body any, result any) error {
+func (c *Client) Patch(ctx context.Context, path string, body, result any) error {
 	return c.do(ctx, http.MethodPatch, path, body, result)
 }
 
@@ -147,8 +148,8 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 	}
 
 	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
-		var apiErr APIError
+		defer func() { _ = resp.Body.Close() }()
+		var apiErr Error
 		apiErr.StatusCode = resp.StatusCode
 		apiErr.Status = resp.Status
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)

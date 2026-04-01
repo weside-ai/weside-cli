@@ -1,3 +1,4 @@
+// Package ui provides output formatting for the CLI.
 package ui
 
 import (

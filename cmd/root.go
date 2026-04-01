@@ -1,3 +1,4 @@
+// Package cmd implements all CLI commands for the weside CLI.
 package cmd
 
 import (
@@ -26,6 +27,7 @@ Chat with your Companion, manage memories and goals, configure providers,
 and more — all from your terminal.`,
 }
 
+// Execute runs the root command.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
