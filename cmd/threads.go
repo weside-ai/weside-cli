@@ -42,15 +42,16 @@ var threadsListCmd = &cobra.Command{
 		threads, _ := result["threads"].([]any)
 		total := result["total"]
 
-		headers := []string{"THREAD ID", "COMPANION", "LAST MESSAGE", "CREATED"}
+		headers := []string{"THREAD ID", "TITLE", "MESSAGES", "LAST MESSAGE", "CREATED"}
 		var rows [][]string
 		for _, item := range threads {
 			t, _ := item.(map[string]any)
 			id := fmt.Sprintf("%v", t["id"])
-			companion := fmt.Sprintf("%v", t["companion_name"])
-			lastMsg := truncate(fmt.Sprintf("%v", t["last_message_preview"]), 40)
+			title := truncate(fmt.Sprintf("%v", t["title"]), 30)
+			msgCount := fmt.Sprintf("%v", t["message_count"])
+			lastMsg := truncate(fmt.Sprintf("%v", t["last_message"]), 30)
 			created := fmt.Sprintf("%v", t["created_at"])
-			rows = append(rows, []string{id, companion, lastMsg, created})
+			rows = append(rows, []string{id, title, msgCount, lastMsg, created})
 		}
 
 		ui.PrintTable(headers, rows)

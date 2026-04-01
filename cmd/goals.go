@@ -9,11 +9,7 @@ import (
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var (
-	goalTitle   string
-	goalContent string
-	goalStatus  string
-)
+var goalStatus string
 
 var goalsCmd = &cobra.Command{
 	Use:   "goals",
@@ -35,9 +31,7 @@ var goalsListCmd = &cobra.Command{
 		}
 
 		path := fmt.Sprintf("/companions/%s/memories/goals", companionID)
-		var result struct {
-			Items []map[string]any `json:"items"`
-		}
+		var result map[string]any
 		if err := client.Get(context.Background(), path, &result); err != nil {
 			return fmt.Errorf("listing goals: %w", err)
 		}
@@ -47,56 +41,22 @@ var goalsListCmd = &cobra.Command{
 			return nil
 		}
 
-		headers := []string{"TITLE", "STATUS", "CONTENT"}
+		// API returns {active: [...], paused: [...], completed: [...]}
+		headers := []string{"STATUS", "ORDER", "TITLE", "CONTENT"}
 		var rows [][]string
-		for _, g := range result.Items {
-			title := fmt.Sprintf("%v", g["title"])
-			status := fmt.Sprintf("%v", g["goal_status"])
-			content := truncate(fmt.Sprintf("%v", g["content"]), 50)
-			rows = append(rows, []string{title, status, content})
+
+		for _, status := range []string{"active", "paused", "completed"} {
+			goals, _ := result[status].([]any)
+			for _, item := range goals {
+				g, _ := item.(map[string]any)
+				title := truncate(fmt.Sprintf("%v", g["title"]), 30)
+				content := truncate(fmt.Sprintf("%v", g["content"]), 40)
+				order := fmt.Sprintf("%v", g["order"])
+				rows = append(rows, []string{status, order, title, content})
+			}
 		}
 
 		ui.PrintTable(headers, rows)
-		return nil
-	},
-}
-
-var goalsCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a new goal",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		if goalTitle == "" || goalContent == "" {
-			return fmt.Errorf("--title and --content are required")
-		}
-
-		client, err := newAuthenticatedClient()
-		if err != nil {
-			return err
-		}
-
-		companionID := viper.GetString("default_companion_id")
-		if companionID == "" {
-			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
-		}
-
-		body := map[string]string{
-			"title":       goalTitle,
-			"content":     goalContent,
-			"memory_type": "goal",
-		}
-
-		path := fmt.Sprintf("/companions/%s/memories", companionID)
-		var result map[string]any
-		if err := client.Post(context.Background(), path, body, &result); err != nil {
-			return fmt.Errorf("creating goal: %w", err)
-		}
-
-		if IsJSON() {
-			ui.PrintJSON(result)
-			return nil
-		}
-
-		ui.PrintSuccess("Goal created: %s", goalTitle)
 		return nil
 	},
 }
@@ -120,22 +80,28 @@ var goalsUpdateCmd = &cobra.Command{
 			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
 		}
 
-		// Find goal by title
+		// Find goal by title across all status groups
 		path := fmt.Sprintf("/companions/%s/memories/goals", companionID)
-		var goals struct {
-			Items []map[string]any `json:"items"`
-		}
-		if err := client.Get(context.Background(), path, &goals); err != nil {
+		var result map[string]any
+		if err := client.Get(context.Background(), path, &result); err != nil {
 			return fmt.Errorf("listing goals: %w", err)
 		}
 
 		var groupID string
-		for _, g := range goals.Items {
-			if fmt.Sprintf("%v", g["title"]) == args[0] {
-				groupID = fmt.Sprintf("%v", g["group_id"])
+		for _, status := range []string{"active", "paused", "completed"} {
+			goals, _ := result[status].([]any)
+			for _, item := range goals {
+				g, _ := item.(map[string]any)
+				if fmt.Sprintf("%v", g["title"]) == args[0] {
+					groupID = fmt.Sprintf("%v", g["memory_group_id"])
+					break
+				}
+			}
+			if groupID != "" {
 				break
 			}
 		}
+
 		if groupID == "" {
 			return fmt.Errorf("goal %q not found", args[0])
 		}
@@ -152,11 +118,10 @@ var goalsUpdateCmd = &cobra.Command{
 }
 
 func init() {
-	goalsCreateCmd.Flags().StringVar(&goalTitle, "title", "", "goal title")
-	goalsCreateCmd.Flags().StringVar(&goalContent, "content", "", "goal description")
 	goalsUpdateCmd.Flags().StringVar(&goalStatus, "status", "", "new status (active, paused, completed)")
 	goalsCmd.AddCommand(goalsListCmd)
-	goalsCmd.AddCommand(goalsCreateCmd)
 	goalsCmd.AddCommand(goalsUpdateCmd)
+	// Note: goal creation is handled by the Companion during conversations,
+	// not via REST API. Use the MCP or chat to create goals.
 	rootCmd.AddCommand(goalsCmd)
 }

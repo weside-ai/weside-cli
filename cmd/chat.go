@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -186,20 +187,23 @@ func sendStreaming(client interface {
 			break
 		}
 
-		// Parse SSE event - extract text content
-		if strings.Contains(data, `"type":"content"`) || strings.Contains(data, `"text"`) {
-			// Simple extraction: find "text":"..." in the JSON
-			if idx := strings.Index(data, `"text":"`); idx >= 0 {
-				rest := data[idx+8:]
-				if endIdx := strings.Index(rest, `"`); endIdx >= 0 {
-					chunk := rest[:endIdx]
-					// Unescape basic JSON escapes
-					chunk = strings.ReplaceAll(chunk, `\n`, "\n")
-					chunk = strings.ReplaceAll(chunk, `\"`, `"`)
-					chunk = strings.ReplaceAll(chunk, `\\`, `\`)
-					fmt.Print(chunk)
+		// Parse SSE event as JSON
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+
+		// Extract text from content blocks [{type: "text", text: "..."}]
+		if content, ok := event["content"].([]any); ok {
+			for _, block := range content {
+				if b, ok := block.(map[string]any); ok {
+					if text, ok := b["text"].(string); ok {
+						fmt.Print(text)
+					}
 				}
 			}
+		} else if text, ok := event["text"].(string); ok {
+			fmt.Print(text)
 		}
 	}
 	fmt.Println()

@@ -76,6 +76,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, result any) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+	}
+
 	if resp.StatusCode >= 400 {
 		var apiErr Error
 		apiErr.StatusCode = resp.StatusCode
