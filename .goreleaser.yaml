@@ -1,0 +1,40 @@
+version: 2
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/weside-ai/weside-cli/cmd.version={{.Version}}
+      - -X github.com/weside-ai/weside-cli/cmd.commit={{.Commit}}
+      - -X github.com/weside-ai/weside-cli/cmd.date={{.Date}}
+
+archives:
+  - format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+brews:
+  - repository:
+      owner: weside-ai
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://weside.ai"
+    description: "CLI for the weside.ai AI Companion Platform"
+    license: "Apache-2.0"
+    install: |
+      bin.install "weside"
+    test: |
+      system "#{bin}/weside", "version"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

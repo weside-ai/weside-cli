@@ -1,0 +1,22 @@
+# Binary
+weside
+weside.exe
+
+# Test
+coverage.out
+
+# GoReleaser
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (user-specific)
+.env
