@@ -1,0 +1,76 @@
+name: CodeRabbit Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created, deleted]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: coderabbit-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check-coderabbit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Check for unresolved CodeRabbit threads
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const query = `
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100) {
+                      nodes {
+                        isResolved
+                        comments(first: 1) {
+                          nodes {
+                            author { login }
+                            body
+                            path
+                            line
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            const result = await github.graphql(query, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pr: prNumber
+            });
+            const threads = result.repository.pullRequest.reviewThreads.nodes;
+            const coderabbitThreads = threads.filter(t => {
+              const c = t.comments.nodes[0];
+              return c && c.author && c.author.login.toLowerCase().includes('coderabbit');
+            });
+            if (coderabbitThreads.length === 0) {
+              console.log('No CodeRabbit threads - passing');
+              return;
+            }
+            const unresolved = coderabbitThreads.filter(t => !t.isResolved);
+            const severityPattern = /_(🔴|🟠)\s+(Critical|Major)_|🔴\s+Critical|🟠\s+Major/;
+            const majorUnresolved = unresolved.filter(t => severityPattern.test(t.comments.nodes[0]?.body || ''));
+            console.log(`CodeRabbit: ${coderabbitThreads.length} total, ${unresolved.length} unresolved, ${majorUnresolved.length} CRITICAL/MAJOR`);
+            if (majorUnresolved.length > 0) {
+              majorUnresolved.forEach(t => {
+                const c = t.comments.nodes[0];
+                console.log(`  - ${c?.path || '?'}:${c?.line || '?'}: ${(c?.body || '').substring(0, 120)}...`);
+              });
+              core.setFailed(`${majorUnresolved.length} unresolved CRITICAL/MAJOR CodeRabbit thread(s)`);
+            } else {
+              console.log('All CRITICAL/MAJOR threads resolved');
+            }

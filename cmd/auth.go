@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/api"
@@ -25,10 +28,7 @@ var authLoginCmd = &cobra.Command{
 		if devMode {
 			return loginDev()
 		}
-		// TODO(WA-698 Phase 5): Supabase PKCE flow
-		fmt.Println("Production login (Supabase PKCE) is not yet implemented.")
-		fmt.Println("Use --dev for local development.")
-		return nil
+		return loginPKCE()
 	},
 }
 
@@ -87,6 +87,68 @@ var authTokenCmd = &cobra.Command{
 		_, _ = fmt.Fprint(os.Stdout, token)
 		return nil
 	},
+}
+
+func loginPKCE() error {
+	// Generate PKCE verifier + challenge
+	verifier, err := auth.GenerateVerifier()
+	if err != nil {
+		return err
+	}
+	challenge := auth.GenerateChallenge(verifier)
+
+	// Start callback server (finds free port)
+	server, err := auth.NewCallbackServer()
+	if err != nil {
+		return err
+	}
+
+	// Open browser
+	authURL := auth.AuthorizeURL(challenge, server.RedirectURI())
+	fmt.Println("Opening browser for login...")
+	fmt.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
+	_ = openBrowser(authURL)
+
+	// Wait for callback (2 min timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	fmt.Println("Waiting for login...")
+	code, err := server.WaitForCode(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Exchange code for tokens
+	result, err := auth.ExchangeCode(code, verifier, server.RedirectURI())
+	if err != nil {
+		return err
+	}
+
+	// Save tokens
+	storage := auth.NewStorage()
+	if err := storage.Save(&auth.Tokens{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	}); err != nil {
+		return fmt.Errorf("saving tokens: %w", err)
+	}
+
+	ui.PrintSuccess("Login successful!")
+	return nil
+}
+
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	return cmd.Start()
 }
 
 func loginDev() error {

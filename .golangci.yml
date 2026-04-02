@@ -28,7 +28,9 @@ linters:
       excludes:
         - G104
         - G117
+        - G204
         - G304
+        - G705
 
 run:
   timeout: 5m

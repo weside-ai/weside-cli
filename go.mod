@@ -1,6 +1,6 @@
 module github.com/weside-ai/weside-cli
 
-go 1.23.8
+go 1.24.4
 
 require (
 	github.com/spf13/cobra v1.10.2
