@@ -1,11 +1,16 @@
 {
   "name": "weside-cli",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "CLI for the weside.ai AI Companion Platform",
   "homepage": "https://github.com/weside-ai/weside-cli",
   "repository": {
     "type": "git",
     "url": "https://github.com/weside-ai/weside-cli.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public",
+    "provenance": true
   },
   "license": "Apache-2.0",
   "bin": {
