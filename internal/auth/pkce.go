@@ -7,12 +7,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+var supabaseHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 const (
 	supabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
@@ -131,7 +134,7 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 			errMsg = "no authorization code received"
 		}
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprintf(w, `<html><body><h2>Login failed</h2><p>%s</p><p>You can close this tab.</p></body></html>`, errMsg)
+		_, _ = fmt.Fprintf(w, `<html><body><h2>Login failed</h2><p>%s</p><p>You can close this tab.</p></body></html>`, html.EscapeString(errMsg))
 		cs.errCh <- fmt.Errorf("auth callback: %s", errMsg)
 		return
 	}
@@ -150,7 +153,7 @@ func ExchangeCode(code, verifier, redirectURI string) (*PKCEResult, error) {
 		"redirect_uri":  {redirectURI},
 	}
 
-	resp, err := http.Post(
+	resp, err := supabaseHTTPClient.Post(
 		supabaseURL+"/auth/v1/token?grant_type=pkce",
 		"application/x-www-form-urlencoded",
 		strings.NewReader(data.Encode()),
@@ -181,7 +184,7 @@ func RefreshAccessToken(refreshToken string) (*PKCEResult, error) {
 		"refresh_token": {refreshToken},
 	}
 
-	resp, err := http.Post(
+	resp, err := supabaseHTTPClient.Post(
 		supabaseURL+"/auth/v1/token?grant_type=refresh_token",
 		"application/x-www-form-urlencoded",
 		strings.NewReader(data.Encode()),
