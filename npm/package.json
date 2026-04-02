@@ -16,7 +16,8 @@
   },
   "files": [
     "bin/",
-    "postinstall.js"
+    "postinstall.js",
+    "README.md"
   ],
   "keywords": [
     "weside",
