@@ -157,7 +157,7 @@ func sendNonStreaming(client interface {
 			for _, block := range content {
 				if b, ok := block.(map[string]any); ok {
 					if text, ok := b["text"].(string); ok {
-						fmt.Println(text)
+						fmt.Print(ui.RenderMarkdown(text))
 					}
 				}
 			}

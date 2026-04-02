@@ -1,6 +1,6 @@
 {
   "name": "weside-cli",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "CLI for the weside.ai AI Companion Platform",
   "homepage": "https://github.com/weside-ai/weside-cli",
   "repository": {

@@ -6,6 +6,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+var (
+	headerStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	sepStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	successStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 )
 
 // PrintJSON outputs data as formatted JSON to stdout.
@@ -17,18 +26,20 @@ func PrintJSON(data any) {
 
 // PrintError outputs an error message to stderr.
 func PrintError(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintln(os.Stderr, errorStyle.Render("Error: "+msg))
 }
 
 // PrintSuccess outputs a success message to stdout.
 func PrintSuccess(format string, args ...any) {
-	fmt.Printf(format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Println(successStyle.Render(msg))
 }
 
-// PrintTable outputs a simple table with headers and rows.
+// PrintTable outputs a styled table with headers and rows.
 func PrintTable(headers []string, rows [][]string) {
 	if len(rows) == 0 {
-		fmt.Println("(no results)")
+		fmt.Println(sepStyle.Render("(no results)"))
 		return
 	}
 
@@ -46,16 +57,18 @@ func PrintTable(headers []string, rows [][]string) {
 	}
 
 	// Print header
+	var headerParts []string
 	for i, h := range headers {
-		fmt.Printf("%-*s  ", widths[i], h)
+		headerParts = append(headerParts, fmt.Sprintf("%-*s", widths[i], h))
 	}
-	fmt.Println()
+	fmt.Println(headerStyle.Render(strings.Join(headerParts, "  ")))
 
 	// Print separator
-	for i := range headers {
-		fmt.Print(strings.Repeat("-", widths[i]) + "  ")
+	var sepParts []string
+	for _, w := range widths {
+		sepParts = append(sepParts, strings.Repeat("─", w))
 	}
-	fmt.Println()
+	fmt.Println(sepStyle.Render(strings.Join(sepParts, "──")))
 
 	// Print rows
 	for _, row := range rows {
