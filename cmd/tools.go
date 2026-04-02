@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/weside-ai/weside-cli/internal/auth"
+	"github.com/weside-ai/weside-cli/internal/mcp"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
@@ -14,79 +17,103 @@ var toolsCmd = &cobra.Command{
 }
 
 var toolsDiscoverCmd = &cobra.Command{
-	Use:   "discover [category]",
-	Short: "Discover available tool categories",
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := newAuthenticatedClient()
+	Use:   "discover",
+	Short: "Discover available tools from the MCP server",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := newMCPClient()
 		if err != nil {
 			return err
 		}
 
-		// Tools are accessed via MCP HTTP transport
-		path := "/mcp"
-
-		// Build MCP tool call
-		toolName := "discover_tools"
-		toolArgs := map[string]any{}
-		if len(args) > 0 {
-			toolArgs["category"] = args[0]
-		}
-
-		body := map[string]any{
-			"method": "tools/call",
-			"params": map[string]any{
-				"name":      toolName,
-				"arguments": toolArgs,
-			},
-		}
-
-		var result map[string]any
-		if err := client.Post(context.Background(), path, body, &result); err != nil {
-			// Fallback: try REST endpoint if MCP fails
-			return fmt.Errorf("tool discovery not available via CLI yet (use MCP or web interface)")
+		result, err := client.ListTools(context.Background())
+		if err != nil {
+			return fmt.Errorf("discovering tools: %w", err)
 		}
 
 		if IsJSON() {
-			ui.PrintJSON(result)
+			fmt.Println(string(result))
 			return nil
 		}
 
-		// Display result
-		if content, ok := result["result"].(string); ok {
-			fmt.Println(content)
-		} else {
-			ui.PrintJSON(result)
+		// Parse tools list
+		var toolsResult struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"tools"`
 		}
-		return nil
-	},
-}
+		if err := json.Unmarshal(result, &toolsResult); err != nil {
+			// Fallback: print raw
+			fmt.Println(string(result))
+			return nil
+		}
 
-var toolsSchemaCmd = &cobra.Command{
-	Use:   "schema <name>",
-	Short: "Show tool input schema",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		// TODO(WA-698 Phase 8): MCP HTTP transport for tool schema
-		fmt.Printf("Tool schema for %q not yet available via CLI (use MCP or web interface)\n", args[0])
+		headers := []string{"NAME", "DESCRIPTION"}
+		var rows [][]string
+		for _, t := range toolsResult.Tools {
+			rows = append(rows, []string{t.Name, truncate(t.Description, 60)})
+		}
+		ui.PrintTable(headers, rows)
+		fmt.Printf("\n%d tool(s)\n", len(toolsResult.Tools))
 		return nil
 	},
 }
 
 var toolsExecCmd = &cobra.Command{
-	Use:   "exec <name> [args...]",
+	Use:   "exec <name> [json-args]",
 	Short: "Execute a tool",
-	Args:  cobra.MinimumNArgs(1),
+	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(_ *cobra.Command, args []string) error {
-		// TODO(WA-698 Phase 8): MCP HTTP transport for tool execution
-		fmt.Printf("Tool execution for %q not yet available via CLI (use MCP or web interface)\n", args[0])
+		client, err := newMCPClient()
+		if err != nil {
+			return err
+		}
+
+		toolName := args[0]
+		arguments := map[string]any{}
+		if len(args) > 1 {
+			if err := json.Unmarshal([]byte(args[1]), &arguments); err != nil {
+				return fmt.Errorf("parsing arguments JSON: %w", err)
+			}
+		}
+
+		result, err := client.CallTool(context.Background(), toolName, arguments)
+		if err != nil {
+			return fmt.Errorf("executing tool %q: %w", toolName, err)
+		}
+
+		// Parse result content
+		var callResult struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
+			for _, c := range callResult.Content {
+				fmt.Println(c.Text)
+			}
+			return nil
+		}
+
+		// Fallback: print raw JSON
+		fmt.Println(string(result))
 		return nil
 	},
 }
 
+func newMCPClient() (*mcp.Client, error) {
+	token, err := auth.GetToken()
+	if err != nil {
+		return nil, err
+	}
+
+	baseURL := GetAPIURL() + "/mcp/"
+	return mcp.NewClient(baseURL, token), nil
+}
+
 func init() {
 	toolsCmd.AddCommand(toolsDiscoverCmd)
-	toolsCmd.AddCommand(toolsSchemaCmd)
 	toolsCmd.AddCommand(toolsExecCmd)
 	rootCmd.AddCommand(toolsCmd)
 }
