@@ -71,6 +71,7 @@ weside chat --stream -m "Tell me a story"
 | `weside companions show <id>` | Show Companion details |
 | `weside companions create --name "X"` | Create a new Companion |
 | `weside companions select <name>` | Set default Companion for chat |
+| `weside companions identity` | Show active Companion's system prompt |
 
 ### Chat
 
@@ -98,10 +99,12 @@ weside chat --stream -m "Tell me a story"
 |---------|-------------|
 | `weside memories search "query"` | Search memories semantically |
 | `weside memories list` | List all memories |
+| `weside memories save <title> --content "..."` | Save a memory (via MCP) |
 | `weside goals list` | List goals (active, paused, completed) |
 | `weside goals update <title> --status completed` | Update goal status |
+| `weside goals save <title> --content "..."` | Save a goal (via MCP) |
 
-> **Note:** Memory and goal creation happens through conversations with your Companion, not via CLI commands.
+> **Note:** `save` commands use the MCP server under the hood. Memories and goals can also be created through conversations with your Companion.
 
 ### Provider & Data Residency
 
