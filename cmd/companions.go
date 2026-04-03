@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -229,6 +230,45 @@ func resolveCompanionID(client *api.Client, nameOrID string) (string, error) {
 	return "", fmt.Errorf("companion %q not found", nameOrID)
 }
 
+var companionsIdentityCmd = &cobra.Command{
+	Use:   "identity",
+	Short: "Load the active Companion's full identity via MCP",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := newMCPClient()
+		if err != nil {
+			return err
+		}
+
+		result, err := client.CallTool(context.Background(), "get_companion_identity", map[string]any{})
+		if err != nil {
+			return fmt.Errorf("loading companion identity: %w", err)
+		}
+
+		if IsJSON() {
+			fmt.Println(string(result))
+			return nil
+		}
+
+		// Parse MCP tool result content
+		var callResult struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
+			for _, c := range callResult.Content {
+				fmt.Println(c.Text)
+			}
+			return nil
+		}
+
+		// Fallback: print raw
+		fmt.Println(string(result))
+		return nil
+	},
+}
+
 func init() {
 	companionsCreateCmd.Flags().StringVar(&compName, "name", "", "companion name")
 	companionsCreateCmd.Flags().StringVar(&compPersonality, "personality", "", "companion personality description")
@@ -236,5 +276,6 @@ func init() {
 	companionsCmd.AddCommand(companionsShowCmd)
 	companionsCmd.AddCommand(companionsCreateCmd)
 	companionsCmd.AddCommand(companionsSelectCmd)
+	companionsCmd.AddCommand(companionsIdentityCmd)
 	rootCmd.AddCommand(companionsCmd)
 }

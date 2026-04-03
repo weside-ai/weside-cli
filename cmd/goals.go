@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -117,11 +118,80 @@ var goalsUpdateCmd = &cobra.Command{
 	},
 }
 
+var (
+	goalSaveContent  string
+	goalSaveTags     string
+	goalSaveDue      string
+	goalSaveFollowUp string
+)
+
+var goalsSaveCmd = &cobra.Command{
+	Use:   "save <title>",
+	Short: "Create or update a goal via MCP",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if goalSaveContent == "" {
+			return fmt.Errorf("--content is required")
+		}
+
+		client, err := newMCPClient()
+		if err != nil {
+			return err
+		}
+
+		arguments := map[string]any{
+			"title":   args[0],
+			"content": goalSaveContent,
+		}
+		if goalSaveTags != "" {
+			arguments["tags"] = goalSaveTags
+		}
+		if goalSaveDue != "" {
+			arguments["due_date"] = goalSaveDue
+		}
+		if goalSaveFollowUp != "" {
+			arguments["follow_up_date"] = goalSaveFollowUp
+		}
+
+		result, err := client.CallTool(context.Background(), "save_goal", arguments)
+		if err != nil {
+			return fmt.Errorf("saving goal: %w", err)
+		}
+
+		if IsJSON() {
+			fmt.Println(string(result))
+			return nil
+		}
+
+		// Parse MCP tool result content
+		var callResult struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
+			for _, c := range callResult.Content {
+				fmt.Println(c.Text)
+			}
+			return nil
+		}
+
+		ui.PrintSuccess("Goal %q saved", args[0])
+		return nil
+	},
+}
+
 func init() {
 	goalsUpdateCmd.Flags().StringVar(&goalStatus, "status", "", "new status (active, paused, completed)")
+
+	goalsSaveCmd.Flags().StringVar(&goalSaveContent, "content", "", "goal description and details (required)")
+	goalsSaveCmd.Flags().StringVar(&goalSaveTags, "tags", "", "comma-separated tags")
+	goalsSaveCmd.Flags().StringVar(&goalSaveDue, "due", "", "target date (YYYY-MM-DD)")
+	goalsSaveCmd.Flags().StringVar(&goalSaveFollowUp, "follow-up", "", "follow-up date (YYYY-MM-DD)")
+
 	goalsCmd.AddCommand(goalsListCmd)
 	goalsCmd.AddCommand(goalsUpdateCmd)
-	// Note: goal creation is handled by the Companion during conversations,
-	// not via REST API. Use the MCP or chat to create goals.
+	goalsCmd.AddCommand(goalsSaveCmd)
 	rootCmd.AddCommand(goalsCmd)
 }
