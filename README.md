@@ -112,11 +112,14 @@ weside chat --stream -m "Tell me a story"
 | `weside provider set <id>` | Set provider preset (numeric ID) |
 | `weside provider byok <provider> <key>` | Bring Your Own Key |
 
-### Tools
+### Tools (MCP)
 
 | Command | Description |
 |---------|-------------|
 | `weside tools discover` | Discover available tool categories |
+| `weside tools exec <name> '<json>'` | Execute a tool with JSON arguments |
+
+> **MCP Integration:** The same tools are available as MCP server tools in the [we Plugin](https://github.com/weside-ai/claude-code-plugin) for Claude Code. CLI and MCP share the same API surface — see [API Concepts](#api-concepts) below.
 
 ### Configuration
 
@@ -170,6 +173,59 @@ default_companion_id: "53"
 ```
 
 Credentials: `~/.weside/credentials.json` (600 permissions)
+
+## API Concepts
+
+The CLI and the [weside MCP server](https://github.com/weside-ai/claude-code-plugin) expose the same weside.ai API. This section describes the shared concepts.
+
+### Companions
+
+A Companion is a persistent AI persona with its own personality, memory, and goals. Each user can have multiple Companions.
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique identifier |
+| `name` | Display name (used for `companions select`) |
+| `personality` | Personality description text |
+| `created_at` | Creation timestamp |
+
+### Memories
+
+Companions accumulate memories through conversations. Memories are vector-embedded for semantic search.
+
+| Field | Description |
+|-------|-------------|
+| `type` | `fact`, `preference`, `experience`, or `reflection` |
+| `title` | Short title |
+| `content` | Memory content |
+| `tags` | Comma-separated tags (optional) |
+
+**Search** is semantic (vector similarity), not keyword-based. "how does auth work" finds memories about authentication even if they don't contain the word "auth".
+
+### Goals
+
+Goals represent what a Companion is working towards. They can be managed by the user or set collaboratively during conversations.
+
+| Field | Description |
+|-------|-------------|
+| `title` | Goal title (used as identifier for updates) |
+| `content` | Goal description and details |
+| `status` | `active`, `paused`, or `completed` |
+| `due_date` | Target date (YYYY-MM-DD, optional) |
+| `tags` | Comma-separated tags (optional) |
+
+### Provider & Data Residency
+
+Controls which LLM provider and region your Companion uses. Presets group providers by geographic region (EU, US, Asia). BYOK (Bring Your Own Key) allows using your own API keys.
+
+### Tools
+
+Tools are actions a Companion can perform (e.g., web search, file operations). Available tools depend on the Companion's configuration and connected MCP servers.
+
+**CLI:** `weside tools discover` / `weside tools exec <name> '<json>'`
+**MCP:** `discover_tools()` / `execute_tool(name, arguments)`
+
+---
 
 ## Development
 
