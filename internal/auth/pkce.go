@@ -62,14 +62,17 @@ func AuthorizeURL(challenge, redirectTo, provider string) string {
 	return supabaseURL + "/auth/v1/authorize?" + params.Encode()
 }
 
+const callbackPort = 18520
+
 // NewCallbackServer creates and starts a localhost HTTP server for OAuth callbacks.
+// Uses a fixed port so it can be whitelisted in Supabase redirect URLs.
 func NewCallbackServer() (*CallbackServer, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", callbackPort))
 	if err != nil {
-		return nil, fmt.Errorf("starting callback server: %w", err)
+		return nil, fmt.Errorf("starting callback server on port %d (is another login running?): %w", callbackPort, err)
 	}
 
-	port := listener.Addr().(*net.TCPAddr).Port
+	port := callbackPort
 
 	cs := &CallbackServer{
 		listener:    listener,
