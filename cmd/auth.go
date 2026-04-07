@@ -14,7 +14,10 @@ import (
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var devMode bool
+var (
+	devMode      bool
+	authProvider string
+)
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -104,7 +107,7 @@ func loginPKCE() error {
 	}
 
 	// Open browser
-	authURL := auth.AuthorizeURL(challenge, server.RedirectURI())
+	authURL := auth.AuthorizeURL(challenge, server.RedirectURI(), authProvider)
 	fmt.Println("Opening browser for login...")
 	fmt.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
 	_ = openBrowser(authURL)
@@ -178,6 +181,7 @@ func loginDev() error {
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&devMode, "dev", false, "use dev authentication (local only)")
+	authLoginCmd.Flags().StringVar(&authProvider, "provider", "google", "OAuth provider (google)")
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authWhoamiCmd)

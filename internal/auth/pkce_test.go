@@ -44,7 +44,7 @@ func TestGenerateChallenge(t *testing.T) {
 }
 
 func TestAuthorizeURL(t *testing.T) {
-	url := auth.AuthorizeURL("test-challenge", "http://localhost:12345/callback")
+	url := auth.AuthorizeURL("test-challenge", "http://localhost:12345/callback", "google")
 
 	if url == "" {
 		t.Fatal("AuthorizeURL() returned empty string")
@@ -60,6 +60,7 @@ func TestAuthorizeURL(t *testing.T) {
 		{"has challenge", "code_challenge=test-challenge"},
 		{"has S256 method", "code_challenge_method=S256"},
 		{"has redirect_uri", "redirect_uri="},
+		{"has provider", "provider=google"},
 	}
 
 	for _, tt := range tests {

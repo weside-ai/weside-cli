@@ -55,13 +55,14 @@ func GenerateChallenge(verifier string) string {
 }
 
 // AuthorizeURL builds the Supabase authorization URL.
-func AuthorizeURL(challenge, redirectURI string) string {
+func AuthorizeURL(challenge, redirectURI, provider string) string {
 	params := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"provider":              {provider},
 	}
 	return supabaseURL + "/auth/v1/authorize?" + params.Encode()
 }
