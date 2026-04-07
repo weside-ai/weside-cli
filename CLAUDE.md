@@ -83,11 +83,30 @@ WA-XXX
 
 **Branch protection on main:** PR required, CI must pass (lint, test, build).
 
-**Release:** Tag `v*` triggers GoReleaser → GitHub Releases + Homebrew Tap.
+**Release & Install:**
+
+Tag `v*` triggers GoReleaser → GitHub Releases + Homebrew Tap + npm.
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+# 1. Tag + push (triggers GoReleaser CI)
+git tag v0.4.0 && git push origin v0.4.0
+
+# 2. Verify release build
+gh run list -R weside-ai/weside-cli --limit 1
+
+# 3. Install on dev machine (release binary → ~/go/bin/weside)
+gh release download v0.4.0 -R weside-ai/weside-cli -p "*linux_amd64*" -D /tmp/weside-release --clobber
+tar -xzf /tmp/weside-release/weside-cli_*.tar.gz -C /tmp/weside-release/
+cp /tmp/weside-release/weside-cli ~/go/bin/weside
+rm -rf /tmp/weside-release
+weside version  # verify
 ```
+
+**Do NOT use `go install`** — it doesn't inject version ldflags (`weside version` shows "dev").
+
+Users install via:
+- **Homebrew:** `brew install weside-ai/tap/weside`
+- **npm:** `npm install -g @weside-ai/cli`
 
 ## How to Add a New Command
 
@@ -125,12 +144,12 @@ for _, item := range companions {
 
 ## Current Limitations
 
-- **Auth:** Only dev mode (`--dev`) and `WESIDE_TOKEN` env. Production PKCE not yet implemented.
+- **Auth:** PKCE (Google OAuth via browser), dev mode (`--dev`), and `WESIDE_TOKEN` env.
 - **Tools:** `discover` attempts MCP call, `schema` and `exec` are stubs.
 - **Output:** Plain text, no colors/styling (lipgloss/glamour not yet integrated).
 - **Memories/Goals:** Read-only (creation happens through Companion conversations).
 
 ---
 
-**Version:** 2.0
-**Last Updated:** 2026-04-01
+**Version:** 2.1
+**Last Updated:** 2026-04-07

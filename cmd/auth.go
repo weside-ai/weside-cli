@@ -123,7 +123,7 @@ func loginPKCE() error {
 	}
 
 	// Exchange code for tokens
-	result, err := auth.ExchangeCode(code, verifier, server.RedirectURI())
+	result, err := auth.ExchangeCode(code, verifier)
 	if err != nil {
 		return err
 	}

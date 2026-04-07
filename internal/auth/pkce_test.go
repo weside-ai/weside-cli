@@ -56,10 +56,9 @@ func TestAuthorizeURL(t *testing.T) {
 	}{
 		{"has supabase host", "supabase.co"},
 		{"has authorize path", "/auth/v1/authorize"},
-		{"has response_type", "response_type=code"},
 		{"has challenge", "code_challenge=test-challenge"},
 		{"has S256 method", "code_challenge_method=S256"},
-		{"has redirect_uri", "redirect_uri="},
+		{"has redirect_to", "redirect_to="},
 		{"has provider", "provider=google"},
 	}
 
@@ -67,6 +66,22 @@ func TestAuthorizeURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if !contains(url, tt.contains) {
 				t.Errorf("URL %q missing %q", url, tt.contains)
+			}
+		})
+	}
+
+	// Social login flow must NOT include client_id or response_type
+	forbidden := []struct {
+		name     string
+		contains string
+	}{
+		{"no client_id", "client_id="},
+		{"no response_type", "response_type="},
+	}
+	for _, tt := range forbidden {
+		t.Run(tt.name, func(t *testing.T) {
+			if contains(url, tt.contains) {
+				t.Errorf("URL %q should NOT contain %q", url, tt.contains)
 			}
 		})
 	}

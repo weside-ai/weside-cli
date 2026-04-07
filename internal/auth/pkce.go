@@ -17,10 +17,7 @@ import (
 
 var supabaseHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-const (
-	supabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
-	clientID    = "9114483b-1a59-460d-afa0-2534fd3bd1aa"
-)
+const supabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
 
 // PKCEResult contains the tokens from a successful PKCE flow.
 type PKCEResult struct {
@@ -54,15 +51,13 @@ func GenerateChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
-// AuthorizeURL builds the Supabase authorization URL.
-func AuthorizeURL(challenge, redirectURI, provider string) string {
+// AuthorizeURL builds the Supabase social login authorization URL (PKCE flow).
+func AuthorizeURL(challenge, redirectTo, provider string) string {
 	params := url.Values{
-		"response_type":         {"code"},
-		"client_id":             {clientID},
-		"redirect_uri":          {redirectURI},
+		"provider":              {provider},
+		"redirect_to":           {redirectTo},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
-		"provider":              {provider},
 	}
 	return supabaseURL + "/auth/v1/authorize?" + params.Encode()
 }
@@ -146,12 +141,10 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 }
 
 // ExchangeCode exchanges an authorization code for tokens via PKCE.
-func ExchangeCode(code, verifier, redirectURI string) (*PKCEResult, error) {
+func ExchangeCode(code, verifier string) (*PKCEResult, error) {
 	data := url.Values{
-		"grant_type":    {"pkce"},
-		"code":          {code},
+		"auth_code":     {code},
 		"code_verifier": {verifier},
-		"redirect_uri":  {redirectURI},
 	}
 
 	resp, err := supabaseHTTPClient.Post(
