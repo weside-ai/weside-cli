@@ -148,17 +148,21 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 
 // ExchangeCode exchanges an authorization code for tokens via PKCE.
 func ExchangeCode(code, verifier string) (*PKCEResult, error) {
-	data := url.Values{
-		"auth_code":     {code},
-		"code_verifier": {verifier},
+	body := map[string]string{
+		"auth_code":     code,
+		"code_verifier": verifier,
+	}
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling token request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=pkce",
-		strings.NewReader(data.Encode()))
+		strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("creating token request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", supabaseAnonKey)
 
 	resp, err := supabaseHTTPClient.Do(req)
@@ -183,17 +187,20 @@ func ExchangeCode(code, verifier string) (*PKCEResult, error) {
 
 // RefreshAccessToken uses a refresh token to get a new access token.
 func RefreshAccessToken(refreshToken string) (*PKCEResult, error) {
-	data := url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {refreshToken},
+	body := map[string]string{
+		"refresh_token": refreshToken,
+	}
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling refresh request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=refresh_token",
-		strings.NewReader(data.Encode()))
+		strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("creating refresh request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", supabaseAnonKey)
 
 	resp, err := supabaseHTTPClient.Do(req)
