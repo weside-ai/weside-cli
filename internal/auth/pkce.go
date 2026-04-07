@@ -17,7 +17,10 @@ import (
 
 var supabaseHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-const supabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
+const (
+	supabaseURL     = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
+	supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxeWtyd3BtaGpxamhwc25qeGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5ODU3NDksImV4cCI6MjA4NTU2MTc0OX0.ADx_HD7O-xNMx-j4MDrhaJbRO71R-hJO6yTcf5wFWUA"
+)
 
 // PKCEResult contains the tokens from a successful PKCE flow.
 type PKCEResult struct {
@@ -150,11 +153,15 @@ func ExchangeCode(code, verifier string) (*PKCEResult, error) {
 		"code_verifier": {verifier},
 	}
 
-	resp, err := supabaseHTTPClient.Post(
-		supabaseURL+"/auth/v1/token?grant_type=pkce",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
+	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=pkce",
+		strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("apikey", supabaseAnonKey)
+
+	resp, err := supabaseHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
@@ -181,11 +188,15 @@ func RefreshAccessToken(refreshToken string) (*PKCEResult, error) {
 		"refresh_token": {refreshToken},
 	}
 
-	resp, err := supabaseHTTPClient.Post(
-		supabaseURL+"/auth/v1/token?grant_type=refresh_token",
-		"application/x-www-form-urlencoded",
-		strings.NewReader(data.Encode()),
-	)
+	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=refresh_token",
+		strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("apikey", supabaseAnonKey)
+
+	resp, err := supabaseHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh: %w", err)
 	}
