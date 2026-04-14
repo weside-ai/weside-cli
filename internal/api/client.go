@@ -66,6 +66,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, result any) 
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Weside-Client", "cli")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
@@ -142,6 +143,7 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Weside-Client", "cli")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
