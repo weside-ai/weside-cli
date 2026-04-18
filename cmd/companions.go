@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -64,7 +67,7 @@ var companionsListCmd = &cobra.Command{
 }
 
 var companionsShowCmd = &cobra.Command{
-	Use:   "show <id>",
+	Use:   "show <id|name>",
 	Short: "Show Companion details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
@@ -73,8 +76,13 @@ var companionsShowCmd = &cobra.Command{
 			return err
 		}
 
+		companionID, err := resolveCompanionID(client, args[0])
+		if err != nil {
+			return err
+		}
+
 		var companion map[string]any
-		if err := client.Get(context.Background(), "/companions/"+args[0], &companion); err != nil {
+		if err := client.Get(context.Background(), "/companions/"+companionID, &companion); err != nil {
 			return fmt.Errorf("getting companion: %w", err)
 		}
 
@@ -83,15 +91,37 @@ var companionsShowCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("ID:          %v\n", companion["id"])
-		fmt.Printf("Name:        %v\n", companion["name"])
-		fmt.Printf("Personality: %v\n", companion["personality"])
-		if model, ok := companion["llm_model"]; ok && model != nil {
-			fmt.Printf("Model:       %v\n", model)
+		fmt.Printf("ID:                %v\n", companion["id"])
+		fmt.Printf("Name:              %v\n", companion["name"])
+		fmt.Printf("Personality:       %v\n", companion["personality"])
+		fmt.Printf("Published:         %v\n", companion["is_published"])
+		fmt.Printf("Category:          %v\n", companion["category"])
+
+		if tags, ok := companion["tags"].([]any); ok && len(tags) > 0 {
+			tagStrs := make([]string, len(tags))
+			for i, t := range tags {
+				tagStrs[i] = fmt.Sprintf("%v", t)
+			}
+			fmt.Printf("Tags:              %s\n", strings.Join(tagStrs, ", "))
+		} else {
+			fmt.Printf("Tags:              \n")
 		}
+
+		fmt.Printf("Short Description: %v\n", companion["short_description"])
+		fmt.Printf("Avatar URL:        %v\n", companion["avatar_url"])
+		fmt.Printf("Banner URL:        %v\n", companion["banner_url"])
+
 		if created, ok := companion["created_at"]; ok {
-			fmt.Printf("Created:     %v\n", created)
+			fmt.Printf("Created:           %v\n", created)
 		}
+		if updated, ok := companion["updated_at"]; ok {
+			fmt.Printf("Updated:           %v\n", updated)
+		}
+
+		if sp, ok := companion["system_prompt"]; ok && sp != nil && fmt.Sprintf("%v", sp) != "" {
+			fmt.Printf("\nSystem Prompt:\n%s\n", fmt.Sprintf("%v", sp))
+		}
+
 		return nil
 	},
 }
@@ -192,6 +222,174 @@ var companionsSelectCmd = &cobra.Command{
 	},
 }
 
+// Update flags
+var (
+	compUpdateName             string
+	compUpdatePersonality      string
+	compUpdateSystemPrompt     string
+	compUpdateSystemPromptFile string
+	compUpdateShortDescription string
+	compUpdateCategory         string
+	compUpdateTags             string
+	compUpdatePublish          bool
+	compUpdateUnpublish        bool
+)
+
+// readSystemPrompt reads the system prompt from --system-prompt, --system-prompt-file, or stdin (-).
+func readSystemPrompt(cmd *cobra.Command, inline, file string) (prompt string, found bool, err error) {
+	hasInline := cmd.Flags().Changed("system-prompt")
+	hasFile := cmd.Flags().Changed("system-prompt-file")
+
+	if hasInline && hasFile {
+		return "", false, fmt.Errorf("--system-prompt and --system-prompt-file are mutually exclusive")
+	}
+
+	if hasInline {
+		if inline == "-" {
+			data, err := io.ReadAll(stdinReader)
+			if err != nil {
+				return "", false, fmt.Errorf("reading stdin: %w", err)
+			}
+			return string(data), true, nil
+		}
+		return inline, true, nil
+	}
+
+	if hasFile {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", false, fmt.Errorf("reading system prompt file: %w", err)
+		}
+		return string(data), true, nil
+	}
+
+	return "", false, nil
+}
+
+// stdinReader is the reader used for stdin input (injectable for testing).
+var stdinReader io.Reader = os.Stdin
+
+var companionsUpdateCmd = &cobra.Command{
+	Use:   "update <id|name>",
+	Short: "Update a Companion",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if compUpdatePublish && compUpdateUnpublish {
+			return fmt.Errorf("--publish and --unpublish are mutually exclusive")
+		}
+
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		companionID, err := resolveCompanionID(client, args[0])
+		if err != nil {
+			return err
+		}
+
+		// Build PATCH body with only the fields that were explicitly set
+		body := map[string]any{}
+
+		if cmd.Flags().Changed("name") {
+			body["name"] = compUpdateName
+		}
+		if cmd.Flags().Changed("personality") {
+			body["personality"] = compUpdatePersonality
+		}
+		if cmd.Flags().Changed("short-description") {
+			body["short_description"] = compUpdateShortDescription
+		}
+		if cmd.Flags().Changed("category") {
+			body["category"] = compUpdateCategory
+		}
+		if cmd.Flags().Changed("tags") {
+			if compUpdateTags == "" {
+				body["tags"] = []string{}
+			} else {
+				parts := strings.Split(compUpdateTags, ",")
+				tags := make([]string, 0, len(parts))
+				for _, p := range parts {
+					if t := strings.TrimSpace(p); t != "" {
+						tags = append(tags, t)
+					}
+				}
+				body["tags"] = tags
+			}
+		}
+		if compUpdatePublish {
+			body["is_published"] = true
+		}
+		if compUpdateUnpublish {
+			body["is_published"] = false
+		}
+
+		sp, hasPrompt, err := readSystemPrompt(cmd, compUpdateSystemPrompt, compUpdateSystemPromptFile)
+		if err != nil {
+			return err
+		}
+		if hasPrompt {
+			body["system_prompt"] = sp
+		}
+
+		if len(body) == 0 {
+			return fmt.Errorf("no fields provided — specify at least one flag to update")
+		}
+
+		var result map[string]any
+		if err := client.Patch(context.Background(), "/companions/"+companionID, body, &result); err != nil {
+			return fmt.Errorf("updating companion: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		ui.PrintSuccess("Companion %q updated (ID: %v)", result["name"], result["id"])
+		return nil
+	},
+}
+
+// Delete flags
+var compDeleteYes bool
+
+var companionsDeleteCmd = &cobra.Command{
+	Use:   "delete <id|name>",
+	Short: "Delete a Companion",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if !compDeleteYes {
+			return fmt.Errorf(
+				"refusing to delete without --yes flag. Use 'weside companions delete %s --yes' to confirm",
+				args[0],
+			)
+		}
+
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		companionID, err := resolveCompanionID(client, args[0])
+		if err != nil {
+			return err
+		}
+
+		if err := client.Delete(context.Background(), "/companions/"+companionID, nil); err != nil {
+			return fmt.Errorf("deleting companion: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(map[string]any{"deleted": true, "id": companionID})
+			return nil
+		}
+
+		ui.PrintSuccess("Companion %q deleted", args[0])
+		return nil
+	},
+}
+
 func newAuthenticatedClient() (*api.Client, error) {
 	token, err := auth.GetToken()
 	if err != nil {
@@ -256,7 +454,7 @@ var companionsIdentityCmd = &cobra.Command{
 				Text string `json:"text"`
 			} `json:"content"`
 		}
-		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
+		if jsonErr := json.Unmarshal(result, &callResult); jsonErr == nil && len(callResult.Content) > 0 {
 			for _, c := range callResult.Content {
 				fmt.Println(c.Text)
 			}
@@ -272,10 +470,25 @@ var companionsIdentityCmd = &cobra.Command{
 func init() {
 	companionsCreateCmd.Flags().StringVar(&compName, "name", "", "companion name")
 	companionsCreateCmd.Flags().StringVar(&compPersonality, "personality", "", "companion personality description")
+
+	companionsUpdateCmd.Flags().StringVar(&compUpdateName, "name", "", "new companion name")
+	companionsUpdateCmd.Flags().StringVar(&compUpdatePersonality, "personality", "", "new personality description")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "new system prompt (use '-' to read from stdin)")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "path to file containing new system prompt")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateShortDescription, "short-description", "", "short description for Experts/Circle")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateCategory, "category", "", "category (e.g. experts, wellness)")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateTags, "tags", "", "comma-separated tags (e.g. 'ai,productivity')")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdatePublish, "publish", false, "publish companion to Experts/Circle")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdateUnpublish, "unpublish", false, "unpublish companion from Experts/Circle")
+
+	companionsDeleteCmd.Flags().BoolVarP(&compDeleteYes, "yes", "y", false, "confirm deletion without prompt")
+
 	companionsCmd.AddCommand(companionsListCmd)
 	companionsCmd.AddCommand(companionsShowCmd)
 	companionsCmd.AddCommand(companionsCreateCmd)
 	companionsCmd.AddCommand(companionsSelectCmd)
 	companionsCmd.AddCommand(companionsIdentityCmd)
+	companionsCmd.AddCommand(companionsUpdateCmd)
+	companionsCmd.AddCommand(companionsDeleteCmd)
 	rootCmd.AddCommand(companionsCmd)
 }
