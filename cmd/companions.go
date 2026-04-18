@@ -371,18 +371,10 @@ var companionsDeleteCmd = &cobra.Command{
 			return err
 		}
 
-		// Resolve name first so we can print the name in the success message
 		companionID, err := resolveCompanionID(client, args[0])
 		if err != nil {
 			return err
 		}
-
-		// Fetch companion name before deleting (for success message)
-		var companion map[string]any
-		if err := client.Get(context.Background(), "/companions/"+companionID, &companion); err != nil {
-			return fmt.Errorf("getting companion: %w", err)
-		}
-		name := fmt.Sprintf("%v", companion["name"])
 
 		if err := client.Delete(context.Background(), "/companions/"+companionID, nil); err != nil {
 			return fmt.Errorf("deleting companion: %w", err)
@@ -393,7 +385,7 @@ var companionsDeleteCmd = &cobra.Command{
 			return nil
 		}
 
-		ui.PrintSuccess("Companion %q deleted", name)
+		ui.PrintSuccess("Companion %q deleted", args[0])
 		return nil
 	},
 }

@@ -182,21 +182,13 @@ func TestReadSystemPromptNoFlag(t *testing.T) {
 func TestUpdateSendsPatchBody(t *testing.T) {
 	var gotBody map[string]any
 	var gotMethod string
-	var gotPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		switch r.URL.Path {
-		case "/companions":
+		if r.URL.Path == "/companions/5" && r.Method == http.MethodPatch {
+			gotMethod = r.Method
+			_ = json.NewDecoder(r.Body).Decode(&gotBody)
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(companionListResponse("5", "Nox")))
-		case "/companions/5":
-			if r.Method == http.MethodPatch {
-				_ = json.NewDecoder(r.Body).Decode(&gotBody)
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"id":5,"name":"Nox","personality":"updated"}`))
-			}
+			_, _ = w.Write([]byte(`{"id":5,"name":"Nox","personality":"updated"}`))
 		}
 	}))
 	defer srv.Close()
@@ -204,12 +196,15 @@ func TestUpdateSendsPatchBody(t *testing.T) {
 	client := api.NewClient(srv.URL, "tok")
 	var result map[string]any
 	body := map[string]any{"personality": "updated"}
-	err := client.Patch(context.Background(), "/companions/5", body, &result)
-	if err != nil {
+	if err := client.Patch(context.Background(), "/companions/5", body, &result); err != nil {
 		t.Fatalf("PATCH error: %v", err)
 	}
-	_ = gotMethod
-	_ = gotPath
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %q, want PATCH", gotMethod)
+	}
+	if gotBody["personality"] != "updated" {
+		t.Errorf("body personality = %v, want 'updated'", gotBody["personality"])
+	}
 }
 
 func TestUpdateTagsParsedFromCSV(t *testing.T) {
@@ -245,17 +240,6 @@ func TestUpdateTagsParsedFromCSV(t *testing.T) {
 	}
 }
 
-func TestUpdateNoFieldsError(t *testing.T) {
-	// Simulates the "no fields provided" guard: if body is empty, return error
-	body := map[string]any{}
-	if len(body) == 0 {
-		err := fmt.Errorf("no fields provided")
-		if !strings.Contains(err.Error(), "no fields") {
-			t.Errorf("expected 'no fields' error, got %v", err)
-		}
-	}
-}
-
 // --- delete command ---
 
 func TestDeleteWithoutYesFlagErrors(t *testing.T) {
@@ -277,31 +261,19 @@ func TestDeleteWithoutYesFlagErrors(t *testing.T) {
 func TestDeleteWithYesSendsDeleteRequest(t *testing.T) {
 	var deleteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/companions":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(companionListResponse("3", "TestBot")))
-		case "/companions/3":
-			switch r.Method {
-			case http.MethodGet:
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(companionDetailResponse("3", "TestBot")))
-			case http.MethodDelete:
-				deleteCalled = true
-				w.WriteHeader(http.StatusNoContent)
-			}
+		if r.URL.Path == "/companions/3" && r.Method == http.MethodDelete {
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
 		}
 	}))
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "tok")
-	err := client.Delete(context.Background(), "/companions/3", nil)
-	if err != nil {
+	if err := client.Delete(context.Background(), "/companions/3", nil); err != nil {
 		t.Fatalf("DELETE error: %v", err)
 	}
-	deleteCalled = true // mark it was called via our test client
 	if !deleteCalled {
-		t.Error("expected DELETE to be called")
+		t.Error("expected DELETE to be called on /companions/3")
 	}
 }
 
