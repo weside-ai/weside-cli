@@ -37,7 +37,7 @@ weside-cli/
 ├── cmd/                    # Cobra commands (1 file per command group)
 │   ├── root.go             # Root command + global flags + Viper init
 │   ├── auth.go             # auth login/logout/whoami/token
-│   ├── companions.go       # companions list/show/create/select
+│   ├── companions.go       # companions list/show/create/select/update/delete
 │   ├── chat.go             # chat (streaming SSE, stdin pipe)
 │   ├── threads.go          # threads list/show/delete
 │   ├── memories.go         # memories search/list
@@ -148,6 +148,7 @@ for _, item := range companions {
 - **Tools:** `discover` attempts MCP call, `schema` and `exec` are stubs.
 - **Output:** Plain text, no colors/styling (lipgloss/glamour not yet integrated).
 - **Memories/Goals:** Read-only (creation happens through Companion conversations).
+- **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` available. Media upload, tools management, and system-prompt versioning/restore are Follow-ups.
 
 ---
 
