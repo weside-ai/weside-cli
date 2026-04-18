@@ -68,10 +68,12 @@ weside chat --stream -m "Tell me a story"
 | Command | Description |
 |---------|-------------|
 | `weside companions list` | List your Companions |
-| `weside companions show <id>` | Show Companion details |
+| `weside companions show <id\|name>` | Show Companion details (incl. system prompt) |
 | `weside companions create --name "X"` | Create a new Companion |
 | `weside companions select <name>` | Set default Companion for chat |
-| `weside companions identity` | Show active Companion's system prompt |
+| `weside companions identity` | Show active Companion's system prompt via MCP |
+| `weside companions update <id\|name> [flags]` | Update companion (name, personality, system prompt, category, tags, …) |
+| `weside companions delete <id\|name> --yes` | Delete a Companion |
 
 ### Chat
 

@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/auth"
 )
@@ -240,18 +241,171 @@ func TestUpdateTagsParsedFromCSV(t *testing.T) {
 	}
 }
 
+// TestUpdateNoFieldsProvidedError verifies the guard that rejects update calls
+// with no flags set. Uses a numeric companion ID to skip the list API call and
+// WESIDE_TOKEN env var to satisfy auth — no network call is made since body is
+// empty before the PATCH would fire.
+func TestUpdateNoFieldsProvidedError(t *testing.T) {
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	// Ensure bool flags are in their default (false) state.
+	compUpdatePublish = false
+	compUpdateUnpublish = false
+
+	err := companionsUpdateCmd.RunE(companionsUpdateCmd, []string{"1"})
+	if err == nil {
+		t.Fatal("expected 'no fields provided' error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no fields") {
+		t.Errorf("error = %q, want 'no fields provided'", err.Error())
+	}
+}
+
+// TestReadSystemPromptFromFile verifies that --system-prompt-file reads the
+// file and returns its content.
+func TestReadSystemPromptFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/identity.md"
+	content := "You are a helpful assistant with lots of personality."
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := companionsUpdateCmd
+	cmd.ResetFlags()
+	cmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "")
+	cmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "")
+
+	if err := cmd.Flags().Set("system-prompt-file", path); err != nil {
+		t.Fatal(err)
+	}
+
+	sp, has, err := readSystemPrompt(cmd, "", path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
+		t.Error("expected has=true")
+	}
+	if sp != content {
+		t.Errorf("sp = %q, want %q", sp, content)
+	}
+}
+
+// TestReadSystemPromptFromFileMissing verifies that a missing file path
+// returns a clear error.
+func TestReadSystemPromptFromFileMissing(t *testing.T) {
+	cmd := companionsUpdateCmd
+	cmd.ResetFlags()
+	cmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "")
+	cmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "")
+
+	_ = cmd.Flags().Set("system-prompt-file", "/nonexistent/path/identity.md")
+
+	_, _, err := readSystemPrompt(cmd, "", "/nonexistent/path/identity.md")
+	if err == nil {
+		t.Fatal("expected file-not-found error, got nil")
+	}
+	if !strings.Contains(err.Error(), "reading system prompt file") {
+		t.Errorf("error = %q, want file read error", err.Error())
+	}
+}
+
+// TestUpdateIsPublishedBodyContract verifies the sparse-PATCH behaviour for
+// the three is_published states: --publish sets true, --unpublish sets false,
+// neither flag = key absent from body.
+func TestUpdateIsPublishedBodyContract(t *testing.T) {
+	cases := []struct {
+		name        string
+		publish     bool
+		unpublish   bool
+		wantPresent bool
+		wantValue   any
+	}{
+		{"--publish sets true", true, false, true, true},
+		{"--unpublish sets false", false, true, true, false},
+		{"neither: key absent", false, false, false, nil},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/companions":
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(companionListResponse("9", "TestBot")))
+				case "/api/v1/companions/9":
+					_ = json.NewDecoder(r.Body).Decode(&gotBody)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"id":9,"name":"TestBot"}`))
+				}
+			}))
+			defer srv.Close()
+
+			t.Setenv("WESIDE_TOKEN", "test-token")
+			viper.Set("api_url", srv.URL)
+			defer viper.Set("api_url", "")
+
+			compUpdatePublish = tc.publish
+			compUpdateUnpublish = tc.unpublish
+			// Provide at least one other field so body is not empty in the
+			// "neither" case; personality is always present in the body when
+			// the flag is Changed.
+			compUpdatePersonality = "some personality"
+
+			// Reset flags so Changed() reflects our manual assignments.
+			companionsUpdateCmd.ResetFlags()
+			companionsUpdateCmd.Flags().StringVar(&compUpdateName, "name", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdatePersonality, "personality", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdateShortDescription, "short-description", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdateCategory, "category", "", "")
+			companionsUpdateCmd.Flags().StringVar(&compUpdateTags, "tags", "", "")
+			companionsUpdateCmd.Flags().BoolVar(&compUpdatePublish, "publish", false, "")
+			companionsUpdateCmd.Flags().BoolVar(&compUpdateUnpublish, "unpublish", false, "")
+
+			if err := companionsUpdateCmd.Flags().Set("personality", "some personality"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.publish {
+				if err := companionsUpdateCmd.Flags().Set("publish", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.unpublish {
+				if err := companionsUpdateCmd.Flags().Set("unpublish", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := companionsUpdateCmd.RunE(companionsUpdateCmd, []string{"TestBot"})
+			if err != nil {
+				t.Fatalf("RunE error: %v", err)
+			}
+
+			_, present := gotBody["is_published"]
+			if tc.wantPresent && !present {
+				t.Errorf("is_published missing from body, want %v", tc.wantValue)
+			}
+			if !tc.wantPresent && present {
+				t.Errorf("is_published present in body, want absent")
+			}
+			if present && gotBody["is_published"] != tc.wantValue {
+				t.Errorf("is_published = %v, want %v", gotBody["is_published"], tc.wantValue)
+			}
+		})
+	}
+}
+
 // --- delete command ---
 
 func TestDeleteWithoutYesFlagErrors(t *testing.T) {
-	// The delete command requires --yes; without it an error is returned.
-	// We test the guard logic directly.
-	yes := false
-	var err error
-	if !yes {
-		err = fmt.Errorf("refusing to delete without --yes flag")
-	}
+	compDeleteYes = false
+	err := companionsDeleteCmd.RunE(companionsDeleteCmd, []string{"Nox"})
 	if err == nil {
-		t.Fatal("expected error when --yes is not set")
+		t.Fatal("expected 'refusing to delete' error, got nil")
 	}
 	if !strings.Contains(err.Error(), "refusing to delete") {
 		t.Errorf("error = %q, want 'refusing to delete'", err.Error())
