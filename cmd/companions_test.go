@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/api"
-	"github.com/weside-ai/weside-cli/internal/auth"
 )
 
 // setupTestServer creates a test HTTP server with the given handler and
@@ -212,10 +210,10 @@ func TestUpdateTagsParsedFromCSV(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/companions":
+		case "/api/v1/companions":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(companionListResponse("1", "Nox")))
-		case "/companions/1":
+		case "/api/v1/companions/1":
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":1,"name":"Nox"}`))
@@ -223,21 +221,42 @@ func TestUpdateTagsParsedFromCSV(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Directly test the CSV parsing logic
-	input := "a, b, c"
-	parts := strings.Split(input, ",")
-	tags := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if t2 := strings.TrimSpace(p); t2 != "" {
-			tags = append(tags, t2)
-		}
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", srv.URL)
+	defer viper.Set("api_url", "")
+
+	companionsUpdateCmd.ResetFlags()
+	companionsUpdateCmd.Flags().StringVar(&compUpdateName, "name", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdatePersonality, "personality", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateShortDescription, "short-description", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateCategory, "category", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateTags, "tags", "", "")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdatePublish, "publish", false, "")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdateUnpublish, "unpublish", false, "")
+
+	if err := companionsUpdateCmd.Flags().Set("tags", "a, b, c"); err != nil {
+		t.Fatal(err)
+	}
+	compUpdatePublish = false
+	compUpdateUnpublish = false
+
+	if err := companionsUpdateCmd.RunE(companionsUpdateCmd, []string{"Nox"}); err != nil {
+		t.Fatalf("RunE error: %v", err)
 	}
 
-	if len(tags) != 3 {
-		t.Errorf("tags len = %d, want 3", len(tags))
+	rawTags, ok := gotBody["tags"].([]any)
+	if !ok {
+		t.Fatalf("tags in body is %T, want []any", gotBody["tags"])
 	}
-	if tags[0] != "a" || tags[1] != "b" || tags[2] != "c" {
-		t.Errorf("tags = %v, want [a b c]", tags)
+	if len(rawTags) != 3 {
+		t.Errorf("tags len = %d, want 3", len(rawTags))
+	}
+	for i, want := range []string{"a", "b", "c"} {
+		if rawTags[i] != want {
+			t.Errorf("tags[%d] = %v, want %q", i, rawTags[i], want)
+		}
 	}
 }
 
@@ -247,7 +266,18 @@ func TestUpdateTagsParsedFromCSV(t *testing.T) {
 // empty before the PATCH would fire.
 func TestUpdateNoFieldsProvidedError(t *testing.T) {
 	t.Setenv("WESIDE_TOKEN", "test-token")
-	// Ensure bool flags are in their default (false) state.
+
+	// Reset flags so no Changed() state leaks from previous tests.
+	companionsUpdateCmd.ResetFlags()
+	companionsUpdateCmd.Flags().StringVar(&compUpdateName, "name", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdatePersonality, "personality", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPrompt, "system-prompt", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateSystemPromptFile, "system-prompt-file", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateShortDescription, "short-description", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateCategory, "category", "", "")
+	companionsUpdateCmd.Flags().StringVar(&compUpdateTags, "tags", "", "")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdatePublish, "publish", false, "")
+	companionsUpdateCmd.Flags().BoolVar(&compUpdateUnpublish, "unpublish", false, "")
 	compUpdatePublish = false
 	compUpdateUnpublish = false
 
@@ -415,19 +445,29 @@ func TestDeleteWithoutYesFlagErrors(t *testing.T) {
 func TestDeleteWithYesSendsDeleteRequest(t *testing.T) {
 	var deleteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/companions/3" && r.Method == http.MethodDelete {
-			deleteCalled = true
-			w.WriteHeader(http.StatusNoContent)
+		switch r.URL.Path {
+		case "/api/v1/companions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(companionListResponse("3", "TestBot")))
+		case "/api/v1/companions/3":
+			if r.Method == http.MethodDelete {
+				deleteCalled = true
+				w.WriteHeader(http.StatusNoContent)
+			}
 		}
 	}))
 	defer srv.Close()
 
-	client := api.NewClient(srv.URL, "tok")
-	if err := client.Delete(context.Background(), "/companions/3", nil); err != nil {
-		t.Fatalf("DELETE error: %v", err)
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", srv.URL)
+	defer viper.Set("api_url", "")
+
+	compDeleteYes = true
+	if err := companionsDeleteCmd.RunE(companionsDeleteCmd, []string{"TestBot"}); err != nil {
+		t.Fatalf("RunE error: %v", err)
 	}
 	if !deleteCalled {
-		t.Error("expected DELETE to be called on /companions/3")
+		t.Error("expected DELETE to be called on /api/v1/companions/3")
 	}
 }
 
@@ -484,14 +524,3 @@ func TestJSONOutputFormatting(t *testing.T) {
 		t.Errorf("JSON output missing 'id' key: %s", output)
 	}
 }
-
-// --- auth token helper ---
-
-func TestNewAuthenticatedClientRequiresToken(_ *testing.T) {
-	// Ensure auth.GetToken returns an error when no credentials are stored.
-	// This exercises the newAuthenticatedClient error path.
-	_ = auth.GetToken // function exists
-}
-
-// Suppress unused import warning from earlier test helpers
-var _ = io.Discard
