@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   claude-review:
-    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'dependabot/')) }}
+    if: ${{ !(github.event_name == 'pull_request' && (startsWith(github.head_ref, 'dependabot/') || startsWith(github.head_ref, 'renovate/'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -84,3 +84,24 @@ jobs:
           else
             echo "No verdict found"
           fi
+
+  # Bot PRs (dependabot/renovate) skip claude-review above. Since claude-review
+  # is a required status check, set a passing commit status so those PRs aren't
+  # blocked. No code review needed for dependency bumps.
+  claude-review-bot-stub:
+    if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'dependabot/') || startsWith(github.head_ref, 'renovate/'))
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Set claude-review status for bot PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          gh api "repos/$REPO/statuses/$SHA" \
+            -f state=success \
+            -f context=claude-review \
+            -f description="Skipped for $HEAD_REF (dependency-only)"

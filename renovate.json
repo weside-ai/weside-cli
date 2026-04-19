@@ -1,6 +1,93 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate configuration for weside-cli (Go CLI + npm distribution wrapper)",
   "extends": [
-    "config:recommended"
-  ]
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":separateMajorReleases"
+  ],
+  "labels": ["dependencies", "renovate"],
+  "enabledManagers": [
+    "gomod",
+    "npm",
+    "github-actions"
+  ],
+  "packageRules": [
+    {
+      "description": "Go dependencies",
+      "matchManagers": ["gomod"],
+      "labels": ["go", "dependencies"]
+    },
+    {
+      "description": "npm distribution wrapper",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["npm/**"],
+      "labels": ["npm", "distribution"]
+    },
+    {
+      "description": "GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "labels": ["ci"]
+    },
+    {
+      "description": "Group Go patch/minor updates + automerge",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "go dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "labels": ["go", "automerge"]
+    },
+    {
+      "description": "Group npm wrapper patch/minor updates + automerge",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["npm/**"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "npm distribution wrapper",
+      "automerge": true,
+      "automergeType": "pr",
+      "labels": ["npm", "automerge"]
+    },
+    {
+      "description": "Auto-merge GitHub Actions updates (safe with SHA pinning)",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["patch", "minor", "major", "digest", "pin"],
+      "automerge": true,
+      "automergeType": "pr",
+      "groupName": "github actions",
+      "labels": ["automerge", "ci"]
+    },
+    {
+      "description": "Separate major Go updates (breaking changes)",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["breaking-change", "go"]
+    },
+    {
+      "description": "Separate major npm updates (breaking changes)",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["breaking-change", "javascript"]
+    }
+  ],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 3,
+  "platformAutomerge": true,
+  "rebaseWhen": "conflicted",
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/vendor/**"
+  ],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": true
+  },
+  "commitMessagePrefix": "chore(deps):",
+  "commitMessageAction": "update",
+  "commitMessageExtra": "{{#if isMajor}}(major){{else}}{{#if isMinor}}(minor){{else}}(patch){{/if}}{{/if}}",
+  "semanticCommits": "enabled",
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "📦 Dependency Updates Dashboard"
 }
