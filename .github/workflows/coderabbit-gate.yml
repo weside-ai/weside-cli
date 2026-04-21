@@ -1,3 +1,6 @@
+# CodeRabbit Gate — uses Commit Statuses API so the latest run always wins.
+# Branch protection must require "coderabbit-gate" (status context), NOT "check-coderabbit" (job name).
+
 name: CodeRabbit Gate
 
 on:
@@ -14,6 +17,7 @@ concurrency:
 
 permissions:
   pull-requests: read
+  statuses: write
 
 jobs:
   check-coderabbit:
@@ -26,7 +30,17 @@ jobs:
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
-            const query = `
+            const sha = context.payload.pull_request.head.sha;
+
+            const setStatus = (state, description) =>
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner, repo: context.repo.repo,
+                sha, state, context: 'coderabbit-gate', description,
+              });
+
+            await setStatus('pending', 'Checking CodeRabbit review threads...');
+
+            const { repository } = await github.graphql(`
               query($owner: String!, $repo: String!, $pr: Int!) {
                 repository(owner: $owner, name: $repo) {
                   pullRequest(number: $pr) {
@@ -34,43 +48,41 @@ jobs:
                       nodes {
                         isResolved
                         comments(first: 1) {
-                          nodes {
-                            author { login }
-                            body
-                            path
-                            line
-                          }
+                          nodes { author { login } body path line }
                         }
                       }
                     }
                   }
                 }
-              }
-            `;
-            const result = await github.graphql(query, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pr: prNumber
-            });
-            const threads = result.repository.pullRequest.reviewThreads.nodes;
-            const coderabbitThreads = threads.filter(t => {
-              const c = t.comments.nodes[0];
-              return c && c.author && c.author.login.toLowerCase().includes('coderabbit');
-            });
-            if (coderabbitThreads.length === 0) {
-              console.log('No CodeRabbit threads - passing');
-              return;
+              }`, { owner: context.repo.owner, repo: context.repo.repo, pr: prNumber });
+
+            const threads = repository.pullRequest.reviewThreads.nodes;
+            const crThreads = threads.filter(t =>
+              t.comments.nodes[0]?.author?.login?.toLowerCase().includes('coderabbit'));
+
+            if (crThreads.length === 0) {
+              console.log('✅ No CodeRabbit threads found');
+              return setStatus('success', 'No CodeRabbit threads');
             }
-            const unresolved = coderabbitThreads.filter(t => !t.isResolved);
-            const severityPattern = /_(🔴|🟠)\s+(Critical|Major)_|🔴\s+Critical|🟠\s+Major/;
-            const majorUnresolved = unresolved.filter(t => severityPattern.test(t.comments.nodes[0]?.body || ''));
-            console.log(`CodeRabbit: ${coderabbitThreads.length} total, ${unresolved.length} unresolved, ${majorUnresolved.length} CRITICAL/MAJOR`);
-            if (majorUnresolved.length > 0) {
-              majorUnresolved.forEach(t => {
+
+            const unresolved = crThreads.filter(t => !t.isResolved);
+            const sevPattern = /_(🔴|🟠)\s*(Critical|Major)_|🔴\s*Critical|🟠\s*Major/;
+            const major = unresolved.filter(t => sevPattern.test(t.comments.nodes[0]?.body || ''));
+            const minor = unresolved.filter(t => !sevPattern.test(t.comments.nodes[0]?.body || ''));
+
+            console.log(`CodeRabbit: ${crThreads.length} total, ${unresolved.length} unresolved (${major.length} major, ${minor.length} minor)`);
+
+            if (major.length > 0) {
+              major.forEach(t => {
                 const c = t.comments.nodes[0];
-                console.log(`  - ${c?.path || '?'}:${c?.line || '?'}: ${(c?.body || '').substring(0, 120)}...`);
+                console.log(`  ❌ ${c?.path}:${c?.line}: ${(c?.body || '').substring(0, 120)}...`);
               });
-              core.setFailed(`${majorUnresolved.length} unresolved CRITICAL/MAJOR CodeRabbit thread(s)`);
+              await setStatus('failure', `${major.length} unresolved Major/Critical thread(s)`);
+              core.setFailed(`❌ ${major.length} unresolved CRITICAL/MAJOR CodeRabbit thread(s)`);
             } else {
-              console.log('All CRITICAL/MAJOR threads resolved');
+              const desc = minor.length > 0
+                ? `${minor.length} Minor thread(s) (non-blocking)`
+                : 'All CodeRabbit threads resolved';
+              console.log(`✅ ${desc}`);
+              await setStatus('success', desc);
             }

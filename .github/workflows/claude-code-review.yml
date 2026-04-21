@@ -68,7 +68,7 @@ jobs:
           REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
         run: |
           LATEST_CLAUDE_COMMENT=$(gh pr view "$PR_NUMBER" --json comments \
-            --jq '[.comments[] | select(.author.login == "claude[bot]")] | last | .body // ""')
+            --jq '[.comments[] | select(.author.login == "claude")] | last | .body // ""')
 
           if [ "$REVIEW_OUTCOME" = "failure" ]; then
             echo "Claude Code Review crashed - inconclusive"
