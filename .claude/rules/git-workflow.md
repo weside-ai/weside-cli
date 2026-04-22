@@ -1,6 +1,5 @@
 ---
 description: Git workflow and release process for weside CLI
-globs: ["**"]
 ---
 
 # Git Workflow

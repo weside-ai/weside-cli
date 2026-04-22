@@ -1,6 +1,7 @@
 ---
 description: Go coding patterns and conventions for weside CLI
-globs: ["**/*.go"]
+paths:
+  - "**/*.go"
 ---
 
 # Go Patterns
