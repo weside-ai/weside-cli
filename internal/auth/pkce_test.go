@@ -44,7 +44,8 @@ func TestGenerateChallenge(t *testing.T) {
 }
 
 func TestAuthorizeURL(t *testing.T) {
-	url := auth.AuthorizeURL("test-challenge", "http://localhost:12345/callback", "google")
+	const supabaseURL = "https://example.supabase.co"
+	url := auth.AuthorizeURL(supabaseURL, "test-challenge", "http://localhost:12345/callback", "google")
 
 	if url == "" {
 		t.Fatal("AuthorizeURL() returned empty string")
@@ -54,7 +55,7 @@ func TestAuthorizeURL(t *testing.T) {
 		name     string
 		contains string
 	}{
-		{"has supabase host", "supabase.co"},
+		{"uses provided supabase host", "example.supabase.co"},
 		{"has authorize path", "/auth/v1/authorize"},
 		{"has challenge", "code_challenge=test-challenge"},
 		{"has S256 method", "code_challenge_method=S256"},

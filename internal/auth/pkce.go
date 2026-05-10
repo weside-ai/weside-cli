@@ -17,11 +17,6 @@ import (
 
 var supabaseHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-const (
-	supabaseURL     = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
-	supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxeWtyd3BtaGpxamhwc25qeGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5ODU3NDksImV4cCI6MjA4NTU2MTc0OX0.ADx_HD7O-xNMx-j4MDrhaJbRO71R-hJO6yTcf5wFWUA"
-)
-
 // PKCEResult contains the tokens from a successful PKCE flow.
 type PKCEResult struct {
 	AccessToken  string `json:"access_token"`
@@ -55,27 +50,24 @@ func GenerateChallenge(verifier string) string {
 }
 
 // AuthorizeURL builds the Supabase social login authorization URL (PKCE flow).
-func AuthorizeURL(challenge, redirectTo, provider string) string {
+// supabaseURL comes from the resolved Config — never hardcoded here.
+func AuthorizeURL(supabaseURL, challenge, redirectTo, provider string) string {
 	params := url.Values{
 		"provider":              {provider},
 		"redirect_to":           {redirectTo},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 	}
-	return supabaseURL + "/auth/v1/authorize?" + params.Encode()
+	return strings.TrimRight(supabaseURL, "/") + "/auth/v1/authorize?" + params.Encode()
 }
 
-const callbackPort = 18520
-
-// NewCallbackServer creates and starts a localhost HTTP server for OAuth callbacks.
-// Uses a fixed port so it can be whitelisted in Supabase redirect URLs.
-func NewCallbackServer() (*CallbackServer, error) {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", callbackPort))
+// NewCallbackServer creates and starts a localhost HTTP server for OAuth callbacks
+// on the given port (must match a Supabase-whitelisted redirect URL).
+func NewCallbackServer(port int) (*CallbackServer, error) {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return nil, fmt.Errorf("starting callback server on port %d (is another login running?): %w", callbackPort, err)
+		return nil, fmt.Errorf("starting callback server on port %d (is another login running?): %w", port, err)
 	}
-
-	port := callbackPort
 
 	cs := &CallbackServer{
 		listener:    listener,
@@ -147,7 +139,8 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 }
 
 // ExchangeCode exchanges an authorization code for tokens via PKCE.
-func ExchangeCode(code, verifier string) (*PKCEResult, error) {
+// supabaseURL + supabaseAnonKey come from the resolved Config.
+func ExchangeCode(supabaseURL, supabaseAnonKey, code, verifier string) (*PKCEResult, error) {
 	body := map[string]string{
 		"auth_code":     code,
 		"code_verifier": verifier,
@@ -157,8 +150,8 @@ func ExchangeCode(code, verifier string) (*PKCEResult, error) {
 		return nil, fmt.Errorf("marshaling token request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=pkce",
-		strings.NewReader(string(jsonBody)))
+	endpoint := strings.TrimRight(supabaseURL, "/") + "/auth/v1/token?grant_type=pkce"
+	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("creating token request: %w", err)
 	}
@@ -186,7 +179,8 @@ func ExchangeCode(code, verifier string) (*PKCEResult, error) {
 }
 
 // RefreshAccessToken uses a refresh token to get a new access token.
-func RefreshAccessToken(refreshToken string) (*PKCEResult, error) {
+// supabaseURL + supabaseAnonKey come from the resolved Config.
+func RefreshAccessToken(supabaseURL, supabaseAnonKey, refreshToken string) (*PKCEResult, error) {
 	body := map[string]string{
 		"refresh_token": refreshToken,
 	}
@@ -195,8 +189,8 @@ func RefreshAccessToken(refreshToken string) (*PKCEResult, error) {
 		return nil, fmt.Errorf("marshaling refresh request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", supabaseURL+"/auth/v1/token?grant_type=refresh_token",
-		strings.NewReader(string(jsonBody)))
+	endpoint := strings.TrimRight(supabaseURL, "/") + "/auth/v1/token?grant_type=refresh_token"
+	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, fmt.Errorf("creating refresh request: %w", err)
 	}

@@ -10,11 +10,13 @@ import (
 )
 
 var (
-	cfgFile string
-	jsonOut bool
-	verbose bool
-	apiURL  string
-	noColor bool
+	cfgFile         string
+	jsonOut         bool
+	verbose         bool
+	apiURL          string
+	noColor         bool
+	supabaseURL     string
+	supabaseAnonKey string
 )
 
 var rootCmd = &cobra.Command{
@@ -42,11 +44,15 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose output")
 	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "", "API base URL (default: https://api.weside.ai)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color output")
+	rootCmd.PersistentFlags().StringVar(&supabaseURL, "supabase-url", "", "Supabase URL override (escape hatch for self-hosted backends; otherwise discovered via /.well-known/weside-auth)")
+	rootCmd.PersistentFlags().StringVar(&supabaseAnonKey, "supabase-anon-key", "", "Supabase anon-key override (paired with --supabase-url)")
 
 	_ = viper.BindPFlag("json", rootCmd.PersistentFlags().Lookup("json"))
 	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	_ = viper.BindPFlag("api_url", rootCmd.PersistentFlags().Lookup("api-url"))
 	_ = viper.BindPFlag("no_color", rootCmd.PersistentFlags().Lookup("no-color"))
+	_ = viper.BindPFlag("supabase_url", rootCmd.PersistentFlags().Lookup("supabase-url"))
+	_ = viper.BindPFlag("supabase_anon_key", rootCmd.PersistentFlags().Lookup("supabase-anon-key"))
 }
 
 func initConfig() {
