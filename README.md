@@ -132,6 +132,7 @@ weside chat --stream -m "Tell me a story"
 |---------|-------------|
 | `weside config show` | Show current CLI configuration |
 | `weside config set <key> <value>` | Set a configuration value |
+| `weside config refresh-auth` | Re-fetch auth-config (Supabase URL + anon-key) from the backend |
 | `weside version` | Print version and build info |
 
 ## Global Flags
@@ -142,6 +143,8 @@ weside chat --stream -m "Tell me a story"
 | `--verbose` | Enable verbose output |
 | `--api-url` | Custom API URL (default: https://api.weside.ai) |
 | `--no-color` | Disable color output |
+| `--supabase-url` | Override discovered Supabase URL (escape hatch for self-hosted backends; pair with `--supabase-anon-key`) |
+| `--supabase-anon-key` | Override discovered Supabase anon-key (pair with `--supabase-url`) |
 
 ## Environment Variables
 
@@ -149,6 +152,8 @@ weside chat --stream -m "Tell me a story"
 |----------|-------------|
 | `WESIDE_TOKEN` | Access token for CI/headless use (skips login) |
 | `WESIDE_API_URL` | Custom API base URL |
+| `WESIDE_SUPABASE_URL` | Override discovered Supabase URL (must be set together with `WESIDE_SUPABASE_ANON_KEY`) |
+| `WESIDE_SUPABASE_ANON_KEY` | Override discovered Supabase anon-key |
 | `NO_COLOR` | Disable color output (standard) |
 
 ## Scripting & Piping
@@ -175,7 +180,21 @@ Config file: `~/.weside/config.yaml`
 api_url: https://api.weside.ai
 default_companion: nox
 default_companion_id: "53"
+auth:
+  supabase_url: https://pqykrwpmhjqjhpsnjxbd.supabase.co
+  supabase_anon_key: eyJ…
+  callback_port: 18520
+  mcp_url: https://api.weside.ai/mcp/
+  fetched_at: 2026-05-10T20:30:00Z
 ```
+
+The `auth` block is fetched lazily from the backend's
+`/.well-known/weside-auth` endpoint on first login and cached locally.
+The CLI ships with hardcoded fallbacks so first-run works offline; if
+the backend rotates its Supabase anon-key, run `weside config refresh-auth`
+and then `weside auth login` again — no CLI release required. (Plain
+`weside auth login` alone reuses the cached values and would still hit
+the rotated key.)
 
 Credentials: `~/.weside/credentials.json` (600 permissions)
 

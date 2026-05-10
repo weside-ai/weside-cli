@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,6 +94,25 @@ var authTokenCmd = &cobra.Command{
 }
 
 func loginPKCE() error {
+	// Resolve auth-config (override → cache → live → fallback) before anything else.
+	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer resolveCancel()
+	res := auth.Resolve(resolveCtx, GetAPIURL())
+	// Partial override (only one of supabase_url / supabase_anon_key set) is
+	// always a misconfiguration — warn unconditionally so the user notices
+	// that login is silently proceeding against the prod defaults.
+	if errors.Is(res.FetchError, auth.ErrPartialOverride) {
+		fmt.Fprintf(os.Stderr, "auth-config: %v — falling back to hardcoded defaults\n", res.FetchError)
+	} else if IsVerbose() {
+		switch res.Source {
+		case auth.SourceFallback:
+			fmt.Fprintf(os.Stderr, "auth-config: using hardcoded fallback (well-known fetch failed: %v)\n", res.FetchError)
+		default:
+			fmt.Fprintf(os.Stderr, "auth-config: source=%s\n", res.Source)
+		}
+	}
+	cfg := res.Config
+
 	// Generate PKCE verifier + challenge
 	verifier, err := auth.GenerateVerifier()
 	if err != nil {
@@ -100,14 +120,14 @@ func loginPKCE() error {
 	}
 	challenge := auth.GenerateChallenge(verifier)
 
-	// Start callback server (finds free port)
-	server, err := auth.NewCallbackServer()
+	// Start callback server on the resolved port.
+	server, err := auth.NewCallbackServer(cfg.CallbackPort)
 	if err != nil {
 		return err
 	}
 
 	// Open browser
-	authURL := auth.AuthorizeURL(challenge, server.RedirectURI(), authProvider)
+	authURL := auth.AuthorizeURL(cfg.SupabaseURL, challenge, server.RedirectURI(), authProvider)
 	fmt.Println("Opening browser for login...")
 	fmt.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
 	_ = openBrowser(authURL)
@@ -123,7 +143,7 @@ func loginPKCE() error {
 	}
 
 	// Exchange code for tokens
-	result, err := auth.ExchangeCode(code, verifier)
+	result, err := auth.ExchangeCode(cfg.SupabaseURL, cfg.SupabaseAnonKey, code, verifier)
 	if err != nil {
 		return err
 	}
