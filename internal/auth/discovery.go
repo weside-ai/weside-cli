@@ -63,20 +63,26 @@ var discoveryHTTPClient = &http.Client{Timeout: 5 * time.Second}
 //
 // Resolve never returns nil — Source==SourceFallback indicates that the live
 // fetch was attempted and failed; FetchError carries the underlying error so
-// the caller can surface it under --verbose.
+// the caller can surface it under --verbose. A partial override (only one of
+// supabase_url / supabase_anon_key set) is reported via FetchError on the
+// fallback result so the caller can show the user a precise diagnosis.
 func Resolve(ctx context.Context, apiURL string) ResolveResult {
-	if cfg := overrideConfig(); cfg != nil {
+	cfg, err := overrideConfig()
+	if err != nil {
+		return ResolveResult{Config: defaultConfig(), Source: SourceFallback, FetchError: err}
+	}
+	if cfg != nil {
 		return ResolveResult{Config: cfg, Source: SourceOverride}
 	}
-	if cfg, ok := loadCachedAuth(); ok {
-		return ResolveResult{Config: cfg, Source: SourceCache}
+	if cached, ok := loadCachedAuth(); ok {
+		return ResolveResult{Config: cached, Source: SourceCache}
 	}
-	cfg, err := Fetch(ctx, apiURL)
-	if err == nil {
-		_ = saveCachedAuth(cfg)
-		return ResolveResult{Config: cfg, Source: SourceLive}
+	live, fetchErr := Fetch(ctx, apiURL)
+	if fetchErr == nil {
+		_ = saveCachedAuth(live)
+		return ResolveResult{Config: live, Source: SourceLive}
 	}
-	return ResolveResult{Config: defaultConfig(), Source: SourceFallback, FetchError: err}
+	return ResolveResult{Config: defaultConfig(), Source: SourceFallback, FetchError: fetchErr}
 }
 
 // Fetch performs a single live GET against `<apiURL>/.well-known/weside-auth`.
@@ -116,24 +122,27 @@ func Fetch(ctx context.Context, apiURL string) (*Config, error) {
 	return &cfg, nil
 }
 
-func overrideConfig() *Config {
+// errPartialOverride is returned by overrideConfig when only one of the two
+// override values is set. The caller logs this under --verbose; the resolver
+// then falls through to the next precedence level instead of mixing a
+// user-supplied URL with the prod-default anon-key (or vice versa).
+var errPartialOverride = errors.New("--supabase-url and --supabase-anon-key (or WESIDE_SUPABASE_URL/WESIDE_SUPABASE_ANON_KEY) must be set together")
+
+func overrideConfig() (*Config, error) {
 	url := strings.TrimSpace(viper.GetString("supabase_url"))
 	key := strings.TrimSpace(viper.GetString("supabase_anon_key"))
-	if url == "" && key == "" {
-		return nil
-	}
-	if url == "" {
-		url = defaultSupabaseURL
-	}
-	if key == "" {
-		key = defaultSupabaseAnonKey
+	switch {
+	case url == "" && key == "":
+		return nil, nil
+	case url == "" || key == "":
+		return nil, errPartialOverride
 	}
 	return &Config{
 		SupabaseURL:     url,
 		SupabaseAnonKey: key,
 		CallbackPort:    defaultCallbackPort,
 		MCPURL:          defaultMCPURL,
-	}
+	}, nil
 }
 
 // LoadCachedAuth returns the cached auth-config from ~/.weside/config.yaml
@@ -174,6 +183,14 @@ func saveCachedAuth(cfg *Config) error {
 		cfg.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	viper.Set("auth.fetched_at", cfg.FetchedAt)
+
+	// Top-level override flags must NOT be persisted: writing them would make
+	// `weside --supabase-url=X config refresh-auth` permanently override the
+	// cache on every future invocation. Setting to empty string makes
+	// overrideConfig treat them as unset on the next read.
+	viper.Set("supabase_url", "")
+	viper.Set("supabase_anon_key", "")
+
 	return writeConfig()
 }
 

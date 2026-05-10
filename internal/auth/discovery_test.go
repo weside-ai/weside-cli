@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -175,6 +176,23 @@ func TestResolve_OverrideBeatsCache(t *testing.T) {
 	// Override path uses default callback port + mcp URL (not overridable).
 	if res.Config.CallbackPort != 18520 {
 		t.Errorf("CallbackPort = %d, want default 18520", res.Config.CallbackPort)
+	}
+}
+
+func TestResolve_PartialOverrideFallsBackWithDiagnosis(t *testing.T) {
+	resetAuthState(t)
+	// Only URL set — anon-key missing. Must NOT mix with default anon-key.
+	viper.Set("supabase_url", "https://my-selfhosted.example")
+
+	res := auth.Resolve(context.Background(), "http://127.0.0.1:1")
+	if res.Source != auth.SourceFallback {
+		t.Fatalf("source = %q, want %q (partial override must not silently mix defaults)", res.Source, auth.SourceFallback)
+	}
+	if res.FetchError == nil {
+		t.Fatal("FetchError should describe the partial-override mistake")
+	}
+	if !strings.Contains(res.FetchError.Error(), "supabase-url") || !strings.Contains(res.FetchError.Error(), "supabase-anon-key") {
+		t.Errorf("FetchError = %v, want to mention both flags", res.FetchError)
 	}
 }
 
