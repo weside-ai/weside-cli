@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,6 +194,11 @@ func TestResolve_PartialOverrideFallsBackWithDiagnosis(t *testing.T) {
 	}
 	if !strings.Contains(res.FetchError.Error(), "supabase-url") || !strings.Contains(res.FetchError.Error(), "supabase-anon-key") {
 		t.Errorf("FetchError = %v, want to mention both flags", res.FetchError)
+	}
+	// cmd/auth.go uses errors.Is to decide whether to print the unconditional
+	// stderr warning — make sure the sentinel matches.
+	if !errors.Is(res.FetchError, auth.ErrPartialOverride) {
+		t.Errorf("FetchError = %v, want errors.Is to match auth.ErrPartialOverride", res.FetchError)
 	}
 }
 

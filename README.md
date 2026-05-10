@@ -192,7 +192,9 @@ The `auth` block is fetched lazily from the backend's
 `/.well-known/weside-auth` endpoint on first login and cached locally.
 The CLI ships with hardcoded fallbacks so first-run works offline; if
 the backend rotates its Supabase anon-key, run `weside config refresh-auth`
-or just log in again — no CLI release required.
+and then `weside auth login` again — no CLI release required. (Plain
+`weside auth login` alone reuses the cached values and would still hit
+the rotated key.)
 
 Credentials: `~/.weside/credentials.json` (600 permissions)
 

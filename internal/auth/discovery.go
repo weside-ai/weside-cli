@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,14 +76,39 @@ func Resolve(ctx context.Context, apiURL string) ResolveResult {
 		return ResolveResult{Config: cfg, Source: SourceOverride}
 	}
 	if cached, ok := loadCachedAuth(); ok {
+		warnIfCacheStale(cached)
 		return ResolveResult{Config: cached, Source: SourceCache}
 	}
 	live, fetchErr := Fetch(ctx, apiURL)
 	if fetchErr == nil {
-		_ = saveCachedAuth(live)
+		if saveErr := SaveCachedAuth(live); saveErr != nil {
+			fmt.Fprintf(os.Stderr, "auth-config: warning: could not persist cache: %v\n", saveErr)
+		}
 		return ResolveResult{Config: live, Source: SourceLive}
 	}
 	return ResolveResult{Config: defaultConfig(), Source: SourceFallback, FetchError: fetchErr}
+}
+
+// cacheStalenessThreshold defines when loadCachedAuth surfaces a hint that
+// the cached auth-config is old enough to be worth re-fetching. Pure UX
+// nudge — Resolve never invalidates the cache itself; that stays the user's
+// call via `weside config refresh-auth`.
+const cacheStalenessThreshold = 30 * 24 * time.Hour
+
+// warnIfCacheStale prints a one-line stderr hint when the cached auth-config
+// is older than cacheStalenessThreshold (or when fetched_at is unparseable).
+func warnIfCacheStale(cfg *Config) {
+	if cfg.FetchedAt == "" {
+		return
+	}
+	ts, err := time.Parse(time.RFC3339, cfg.FetchedAt)
+	if err != nil {
+		return
+	}
+	if age := time.Since(ts); age > cacheStalenessThreshold {
+		days := int(age / (24 * time.Hour))
+		fmt.Fprintf(os.Stderr, "auth-config: cache is %d days old — run `weside config refresh-auth` if login fails\n", days)
+	}
 }
 
 // Fetch performs a single live GET against `<apiURL>/.well-known/weside-auth`.
@@ -111,8 +137,11 @@ func Fetch(ctx context.Context, apiURL string) (*Config, error) {
 		return nil, fmt.Errorf("well-known returned status %d", resp.StatusCode)
 	}
 
+	// Cap response body to 64 KiB — a misconfigured/malicious well-known endpoint
+	// must not be able to OOM the CLI by streaming a multi-MB JSON payload.
+	const maxWellKnownBodyBytes = 64 * 1024
 	var cfg Config
-	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxWellKnownBodyBytes)).Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing well-known response: %w", err)
 	}
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" || cfg.CallbackPort == 0 || cfg.MCPURL == "" {
@@ -122,11 +151,12 @@ func Fetch(ctx context.Context, apiURL string) (*Config, error) {
 	return &cfg, nil
 }
 
-// errPartialOverride is returned by overrideConfig when only one of the two
-// override values is set. The caller logs this under --verbose; the resolver
-// then falls through to the next precedence level instead of mixing a
-// user-supplied URL with the prod-default anon-key (or vice versa).
-var errPartialOverride = errors.New("--supabase-url and --supabase-anon-key (or WESIDE_SUPABASE_URL/WESIDE_SUPABASE_ANON_KEY) must be set together")
+// ErrPartialOverride is returned by overrideConfig (via Resolve.FetchError)
+// when only one of supabase_url / supabase_anon_key is set. Exported so
+// cmd/auth.go can errors.Is-match against it and print an unconditional
+// warning to stderr — partial overrides always indicate a misconfiguration
+// and must not silently mix a user-supplied URL with the prod-default key.
+var ErrPartialOverride = errors.New("--supabase-url and --supabase-anon-key (or WESIDE_SUPABASE_URL/WESIDE_SUPABASE_ANON_KEY) must be set together")
 
 func overrideConfig() (*Config, error) {
 	url := strings.TrimSpace(viper.GetString("supabase_url"))
@@ -135,7 +165,7 @@ func overrideConfig() (*Config, error) {
 	case url == "" && key == "":
 		return nil, nil
 	case url == "" || key == "":
-		return nil, errPartialOverride
+		return nil, ErrPartialOverride
 	}
 	return &Config{
 		SupabaseURL:     url,
@@ -143,18 +173,6 @@ func overrideConfig() (*Config, error) {
 		CallbackPort:    defaultCallbackPort,
 		MCPURL:          defaultMCPURL,
 	}, nil
-}
-
-// LoadCachedAuth returns the cached auth-config from ~/.weside/config.yaml
-// (via viper). The bool reports whether all required fields were present.
-func LoadCachedAuth() (*Config, bool) {
-	return loadCachedAuth()
-}
-
-// SaveCachedAuth persists the given config to ~/.weside/config.yaml under the
-// `auth.*` block. Sets FetchedAt to now (UTC, RFC3339) if empty.
-func SaveCachedAuth(cfg *Config) error {
-	return saveCachedAuth(cfg)
 }
 
 func loadCachedAuth() (*Config, bool) {
@@ -174,7 +192,10 @@ func loadCachedAuth() (*Config, bool) {
 	}, true
 }
 
-func saveCachedAuth(cfg *Config) error {
+// SaveCachedAuth persists cfg to ~/.weside/config.yaml under the `auth.*` block.
+// Sets FetchedAt to now (UTC, RFC3339) if empty. Used by Resolve on a successful
+// live fetch and by `weside config refresh-auth`.
+func SaveCachedAuth(cfg *Config) error {
 	viper.Set("auth.supabase_url", cfg.SupabaseURL)
 	viper.Set("auth.supabase_anon_key", cfg.SupabaseAnonKey)
 	viper.Set("auth.callback_port", cfg.CallbackPort)

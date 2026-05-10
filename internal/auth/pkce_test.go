@@ -173,3 +173,69 @@ func TestExchangeCode_Non2xx(t *testing.T) {
 		t.Error("ExchangeCode should error on non-2xx response")
 	}
 }
+
+// TestRefreshAccessToken_HappyPath covers the deferred AC-6 path: the
+// function has no callers today (auto-refresh on 401 is a follow-up), but
+// its signature was just changed to take dynamic supabaseURL + anon-key —
+// we want a regression net so a future AC-6 implementer doesn't trip on a
+// silently-broken URL composition or apikey header.
+func TestRefreshAccessToken_HappyPath(t *testing.T) {
+	const wantAnonKey = "test-anon-key"
+	var (
+		gotPath   string
+		gotMethod string
+		gotAPIKey string
+		gotBody   map[string]string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path + "?" + r.URL.RawQuery
+		gotAPIKey = r.Header.Get("apikey")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"access_token": "fresh-access",
+			"refresh_token": "fresh-refresh",
+			"expires_in": 3600,
+			"token_type": "Bearer"
+		}`))
+	}))
+	defer srv.Close()
+
+	res, err := auth.RefreshAccessToken(srv.URL+"/", wantAnonKey, "old-refresh-token")
+	if err != nil {
+		t.Fatalf("RefreshAccessToken error: %v", err)
+	}
+	if res.AccessToken != "fresh-access" || res.RefreshToken != "fresh-refresh" {
+		t.Errorf("got tokens %+v", res)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %s, want POST", gotMethod)
+	}
+	if !strings.HasPrefix(gotPath, "/auth/v1/token") {
+		t.Errorf("path = %s, want /auth/v1/token...", gotPath)
+	}
+	if !strings.Contains(gotPath, "grant_type=refresh_token") {
+		t.Errorf("path = %s, want grant_type=refresh_token", gotPath)
+	}
+	if gotAPIKey != wantAnonKey {
+		t.Errorf("apikey header = %q, want %q", gotAPIKey, wantAnonKey)
+	}
+	if gotBody["refresh_token"] != "old-refresh-token" {
+		t.Errorf("body = %+v, want refresh_token", gotBody)
+	}
+}
+
+func TestRefreshAccessToken_Non2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	if _, err := auth.RefreshAccessToken(srv.URL, "anon", "expired"); err == nil {
+		t.Error("RefreshAccessToken should error on non-2xx response")
+	}
+}

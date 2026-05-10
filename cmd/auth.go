@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,7 +98,12 @@ func loginPKCE() error {
 	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer resolveCancel()
 	res := auth.Resolve(resolveCtx, GetAPIURL())
-	if IsVerbose() {
+	// Partial override (only one of supabase_url / supabase_anon_key set) is
+	// always a misconfiguration — warn unconditionally so the user notices
+	// that login is silently proceeding against the prod defaults.
+	if errors.Is(res.FetchError, auth.ErrPartialOverride) {
+		fmt.Fprintf(os.Stderr, "auth-config: %v — falling back to hardcoded defaults\n", res.FetchError)
+	} else if IsVerbose() {
 		switch res.Source {
 		case auth.SourceFallback:
 			fmt.Fprintf(os.Stderr, "auth-config: using hardcoded fallback (well-known fetch failed: %v)\n", res.FetchError)

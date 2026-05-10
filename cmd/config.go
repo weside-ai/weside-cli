@@ -90,11 +90,23 @@ the new values on the next 'weside auth login' without needing a CLI release.`,
 			return nil
 		}
 		fmt.Printf("auth-config refreshed (fetched_at=%s)\n", cfg.FetchedAt)
-		fmt.Printf("  supabase_url: %s\n", cfg.SupabaseURL)
-		fmt.Printf("  mcp_url:      %s\n", cfg.MCPURL)
-		fmt.Printf("  callback_port: %d\n", cfg.CallbackPort)
+		fmt.Printf("  supabase_url:      %s\n", cfg.SupabaseURL)
+		fmt.Printf("  supabase_anon_key: %s\n", truncateForDisplay(cfg.SupabaseAnonKey))
+		fmt.Printf("  mcp_url:           %s\n", cfg.MCPURL)
+		fmt.Printf("  callback_port:     %d\n", cfg.CallbackPort)
 		return nil
 	},
+}
+
+// truncateForDisplay shortens a credential to a head/tail preview so the user
+// can verify it changed after a rotation without leaking the full secret to
+// scrollback. Returns the original string if it's already short enough.
+func truncateForDisplay(s string) string {
+	const head, tail = 6, 4
+	if len(s) <= head+tail+3 {
+		return s
+	}
+	return s[:head] + "…" + s[len(s)-tail:]
 }
 
 func init() {
