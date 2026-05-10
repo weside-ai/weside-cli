@@ -145,6 +145,7 @@ for _, item := range companions {
 ## Current Limitations
 
 - **Auth:** PKCE (Google OAuth via browser), dev mode (`--dev`), and `WESIDE_TOKEN` env.
+  - **Auth-config discovery:** `internal/auth/discovery.go` resolves Supabase URL + anon-key + callback port + MCP URL via `Resolve()`. Precedence: `--supabase-url`/`--supabase-anon-key` flags (must be set together) → `WESIDE_SUPABASE_URL` / `WESIDE_SUPABASE_ANON_KEY` env (must be set together) → `~/.weside/config.yaml` `auth.*` cache → live GET `<api_url>/.well-known/weside-auth` (5s timeout, response cached) → hardcoded fallback constants in `discovery.go`. Run `weside config refresh-auth` to force-refresh the cache after the backend rotates its anon-key. AC-6 (auto-refresh on 401) is deferred — there is no existing CLI refresh flow to wrap.
 - **Tools:** `discover` attempts MCP call, `schema` and `exec` are stubs.
 - **Output:** Plain text, no colors/styling (lipgloss/glamour not yet integrated).
 - **Memories/Goals:** Read-only (creation happens through Companion conversations).
@@ -152,5 +153,5 @@ for _, item := range companions {
 
 ---
 
-**Version:** 2.1
-**Last Updated:** 2026-04-07
+**Version:** 2.2
+**Last Updated:** 2026-05-10
