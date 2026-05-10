@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/auth"
 	"github.com/weside-ai/weside-cli/internal/config"
@@ -211,9 +210,7 @@ var companionsSelectCmd = &cobra.Command{
 			return fmt.Errorf("companion %q not found", name)
 		}
 
-		viper.Set("default_companion", name)
-		viper.Set("default_companion_id", foundID)
-		if err := config.SetDefaultCompanion(name); err != nil {
+		if err := config.SetDefaultCompanion(name, foundID); err != nil {
 			return fmt.Errorf("saving default companion: %w", err)
 		}
 

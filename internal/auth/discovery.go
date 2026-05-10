@@ -8,11 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/weside-ai/weside-cli/internal/config"
 )
 
 // Config holds the backend-derived auth/discovery values used during PKCE login.
@@ -195,40 +196,31 @@ func loadCachedAuth() (*Config, bool) {
 // SaveCachedAuth persists cfg to ~/.weside/config.yaml under the `auth.*` block.
 // Sets FetchedAt to now (UTC, RFC3339) if empty. Used by Resolve on a successful
 // live fetch and by `weside config refresh-auth`.
+//
+// Routes through config.PersistUpdates rather than viper.WriteConfigAs so that
+// flag values from the current invocation (--api-url, --supabase-url, …) are
+// not silently persisted alongside the auth cache.
 func SaveCachedAuth(cfg *Config) error {
+	if cfg.FetchedAt == "" {
+		cfg.FetchedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	authBlock := map[string]any{
+		"supabase_url":      cfg.SupabaseURL,
+		"supabase_anon_key": cfg.SupabaseAnonKey,
+		"callback_port":     cfg.CallbackPort,
+		"mcp_url":           cfg.MCPURL,
+		"fetched_at":        cfg.FetchedAt,
+	}
+	if err := config.PersistUpdates(map[string]any{"auth": authBlock}); err != nil {
+		return err
+	}
+	// Mirror into viper so the rest of the current process sees the new cache
+	// without needing a re-read of the file.
 	viper.Set("auth.supabase_url", cfg.SupabaseURL)
 	viper.Set("auth.supabase_anon_key", cfg.SupabaseAnonKey)
 	viper.Set("auth.callback_port", cfg.CallbackPort)
 	viper.Set("auth.mcp_url", cfg.MCPURL)
-	if cfg.FetchedAt == "" {
-		cfg.FetchedAt = time.Now().UTC().Format(time.RFC3339)
-	}
 	viper.Set("auth.fetched_at", cfg.FetchedAt)
-
-	// Top-level override flags must NOT be persisted: writing them would make
-	// `weside --supabase-url=X config refresh-auth` permanently override the
-	// cache on every future invocation. Setting to empty string makes
-	// overrideConfig treat them as unset on the next read.
-	viper.Set("supabase_url", "")
-	viper.Set("supabase_anon_key", "")
-
-	return writeConfig()
-}
-
-// writeConfig persists the current viper state to ~/.weside/config.yaml.
-// Defined as a var so tests can no-op the disk write without touching the user's home dir.
-var writeConfig = func() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("finding home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".weside")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-	if err := viper.WriteConfigAs(filepath.Join(dir, "config.yaml")); err != nil {
-		return fmt.Errorf("saving auth cache: %w", err)
-	}
 	return nil
 }
 

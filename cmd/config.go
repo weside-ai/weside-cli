@@ -50,16 +50,10 @@ var configSetCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		key, value := args[0], args[1]
-		viper.Set(key, value)
-
-		dir, err := config.EnsureConfigDir()
-		if err != nil {
-			return err
-		}
-		if err := viper.WriteConfigAs(dir + "/config.yaml"); err != nil {
+		if err := config.PersistDottedKey(key, value); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
-
+		viper.Set(key, value)
 		ui.PrintSuccess("Config %s = %s", key, value)
 		return nil
 	},

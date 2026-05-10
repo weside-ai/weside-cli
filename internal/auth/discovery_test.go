@@ -15,16 +15,14 @@ import (
 	"github.com/weside-ai/weside-cli/internal/auth"
 )
 
-// resetAuthState clears every viper key auth.Resolve might consult and stubs
-// the cache writer so tests don't touch the real ~/.weside/config.yaml.
+// resetAuthState clears every viper key auth.Resolve might consult and
+// redirects HOME to a per-test temp dir so cache writes land in isolation
+// instead of touching the real ~/.weside/config.yaml.
 func resetAuthState(t *testing.T) {
 	t.Helper()
 	viper.Reset()
-	auth.SetCacheWriterForTests(func() error { return nil })
-	t.Cleanup(func() {
-		viper.Reset()
-		auth.ResetCacheWriterForTests()
-	})
+	t.Setenv("HOME", t.TempDir())
+	t.Cleanup(viper.Reset)
 }
 
 func goodWellKnownHandler(t *testing.T) http.HandlerFunc {
