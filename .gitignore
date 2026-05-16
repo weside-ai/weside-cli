@@ -20,3 +20,6 @@ Thumbs.db
 
 # Config (user-specific)
 .env
+
+# Companion Framework — bridge file holds crew membership
+.weside/council.json

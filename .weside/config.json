@@ -1,0 +1,49 @@
+{
+  "vault": "weside-cli",
+  "framework_version": 1,
+  "onboarded": true,
+  "onboarded_at": "2026-05-16T17:26:43+00:00",
+  "repo_flavor": "engineering",
+  "roles_enabled": [
+    "architect",
+    "legal",
+    "marketing",
+    "orchestrator",
+    "product_owner",
+    "sales",
+    "scrum_master",
+    "security"
+  ],
+  "ticketing": {
+    "tool": "jira",
+    "project_key": "WA",
+    "note": "Repo flavor: Backend/Engineering. Stack: go."
+  },
+  "stack": [
+    "go"
+  ],
+  "council": {
+    "default": [
+      "product_owner",
+      "architect",
+      "scrum_master"
+    ],
+    "meetings": {
+      "vision": [
+        "product_owner",
+        "architect",
+        "orchestrator",
+        "marketing"
+      ],
+      "initiative": [
+        "product_owner",
+        "architect",
+        "orchestrator"
+      ],
+      "refinement": [
+        "product_owner",
+        "architect"
+      ]
+    }
+  }
+}
