@@ -3,7 +3,7 @@ package ui
 import (
 	"os"
 
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 )
 
 // RenderMarkdown renders markdown text for terminal display.
@@ -22,7 +22,11 @@ func RenderMarkdown(text string) string {
 }
 
 func isTTY() bool {
-	fi, err := os.Stdout.Stat()
+	return isTTYFile(os.Stdout)
+}
+
+func isTTYFile(f *os.File) bool {
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
