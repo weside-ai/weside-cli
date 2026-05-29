@@ -8,7 +8,10 @@ const os = require("os");
 
 const REPO = "weside-ai/weside-cli";
 const BIN_DIR = path.join(__dirname, "bin");
-const BIN_NAME = process.platform === "win32" ? "weside.exe" : "weside";
+// Member name inside the release archive (goreleaser builds.binary = weside).
+const ARCHIVE_BIN = process.platform === "win32" ? "weside.exe" : "weside";
+// Where we store it: next to the committed `weside` launcher, which execs this.
+const REAL_BIN = process.platform === "win32" ? "weside-bin.exe" : "weside-bin";
 
 const PLATFORM_MAP = {
   darwin: "darwin",
@@ -44,22 +47,29 @@ async function main() {
   fs.mkdirSync(BIN_DIR, { recursive: true });
 
   const tmpFile = path.join(os.tmpdir(), archiveName);
+  // Extract into a temp dir, never into BIN_DIR directly: the archive member is
+  // also named `weside`, which would clobber the committed launcher of the same
+  // name. We only move the native binary out, to `bin/weside-bin`.
+  const tmpExtract = fs.mkdtempSync(path.join(os.tmpdir(), "weside-cli-"));
 
   try {
     await download(url, tmpFile);
 
     if (ext === "tar.gz") {
-      execSync(`tar -xzf "${tmpFile}" -C "${BIN_DIR}" weside`, {
+      execSync(`tar -xzf "${tmpFile}" -C "${tmpExtract}" ${ARCHIVE_BIN}`, {
         stdio: "pipe",
       });
     } else {
       execSync(
-        `powershell -Command "Expand-Archive -Path '${tmpFile}' -DestinationPath '${BIN_DIR}' -Force"`,
+        `powershell -Command "Expand-Archive -Path '${tmpFile}' -DestinationPath '${tmpExtract}' -Force"`,
         { stdio: "pipe" }
       );
     }
 
-    const binPath = path.join(BIN_DIR, BIN_NAME);
+    // Move the native binary next to the launcher as `weside-bin` (what the
+    // committed `weside` launcher execs). The launcher itself stays in place.
+    const binPath = path.join(BIN_DIR, REAL_BIN);
+    fs.copyFileSync(path.join(tmpExtract, ARCHIVE_BIN), binPath);
     if (process.platform !== "win32") {
       fs.chmodSync(binPath, 0o755);
     }
@@ -74,6 +84,9 @@ async function main() {
   } finally {
     try {
       fs.unlinkSync(tmpFile);
+    } catch {}
+    try {
+      fs.rmSync(tmpExtract, { recursive: true, force: true });
     } catch {}
   }
 }

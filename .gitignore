@@ -23,3 +23,7 @@ Thumbs.db
 
 # Companion Framework — bridge file holds crew membership
 .weside/council.json
+
+# npm wrapper: native binary fetched by postinstall
+npm/bin/weside-bin
+npm/bin/weside-bin.exe
