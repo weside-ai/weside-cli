@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+"use strict";
+
+// Thin launcher: execs the platform binary that postinstall.js downloads
+// next to this file as `weside-bin`. This file is committed (and thus packed
+// into the npm tarball) so that npm creates the `weside` bin shim at install
+// time — the native binary itself only exists after postinstall runs.
+const { spawnSync } = require("child_process");
+const path = require("path");
+
+const bin = path.join(
+  __dirname,
+  process.platform === "win32" ? "weside-bin.exe" : "weside-bin"
+);
+
+const res = spawnSync(bin, process.argv.slice(2), { stdio: "inherit" });
+
+if (res.error) {
+  if (res.error.code === "ENOENT") {
+    console.error(
+      "weside: native binary missing — the postinstall step may have failed.\n" +
+        "Try reinstalling: npm rebuild weside-cli"
+    );
+  } else {
+    console.error(`weside: failed to launch (${res.error.message})`);
+  }
+  process.exit(1);
+}
+
+process.exit(res.status === null ? 1 : res.status);

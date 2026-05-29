@@ -1,6 +1,6 @@
-# Binary
-weside
-weside.exe
+# Binary (root build output only — anchored so it doesn't swallow npm/bin/weside)
+/weside
+/weside.exe
 
 # Test
 coverage.out
