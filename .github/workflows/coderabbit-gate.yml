@@ -1,5 +1,10 @@
-# CodeRabbit Gate — uses Commit Statuses API so the latest run always wins.
-# Branch protection must require "coderabbit-gate" (status context), NOT "check-coderabbit" (job name).
+# CodeRabbit Gate — DISABLED 2026-06-09 across weside-ai org.
+# Review gate now runs on Greptile + claude-review only.
+# See coderabbit-gate.yml.disabled-2026-06-09 for the previous full workflow.
+#
+# Re-enable: delete this file (or restore the .disabled- snapshot).
+# This stub reports `success` so any branch-protection check still
+# pointing at `coderabbit-gate` keeps passing.
 
 name: CodeRabbit Gate
 
@@ -22,67 +27,19 @@ permissions:
 jobs:
   check-coderabbit:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 1
 
     steps:
-      - name: Check for unresolved CodeRabbit threads
+      - name: CodeRabbit disabled — reporting success
         uses: actions/github-script@v9
         with:
           script: |
-            const prNumber = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha;
-
-            const setStatus = (state, description) =>
-              github.rest.repos.createCommitStatus({
+            const sha = context.payload.pull_request?.head.sha;
+            if (sha) {
+              await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner, repo: context.repo.repo,
-                sha, state, context: 'coderabbit-gate', description,
+                sha, state: 'success', context: 'coderabbit-gate',
+                description: 'CodeRabbit disabled 2026-06-09 (weside-ai org-wide)',
               });
-
-            await setStatus('pending', 'Checking CodeRabbit review threads...');
-
-            const { repository } = await github.graphql(`
-              query($owner: String!, $repo: String!, $pr: Int!) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $pr) {
-                    reviewThreads(first: 100) {
-                      nodes {
-                        isResolved
-                        comments(first: 1) {
-                          nodes { author { login } body path line }
-                        }
-                      }
-                    }
-                  }
-                }
-              }`, { owner: context.repo.owner, repo: context.repo.repo, pr: prNumber });
-
-            const threads = repository.pullRequest.reviewThreads.nodes;
-            const crThreads = threads.filter(t =>
-              t.comments.nodes[0]?.author?.login?.toLowerCase().includes('coderabbit'));
-
-            if (crThreads.length === 0) {
-              console.log('✅ No CodeRabbit threads found');
-              return setStatus('success', 'No CodeRabbit threads');
             }
-
-            const unresolved = crThreads.filter(t => !t.isResolved);
-            const sevPattern = /_(🔴|🟠)\s*(Critical|Major)_|🔴\s*Critical|🟠\s*Major/;
-            const major = unresolved.filter(t => sevPattern.test(t.comments.nodes[0]?.body || ''));
-            const minor = unresolved.filter(t => !sevPattern.test(t.comments.nodes[0]?.body || ''));
-
-            console.log(`CodeRabbit: ${crThreads.length} total, ${unresolved.length} unresolved (${major.length} major, ${minor.length} minor)`);
-
-            if (major.length > 0) {
-              major.forEach(t => {
-                const c = t.comments.nodes[0];
-                console.log(`  ❌ ${c?.path}:${c?.line}: ${(c?.body || '').substring(0, 120)}...`);
-              });
-              await setStatus('failure', `${major.length} unresolved Major/Critical thread(s)`);
-              core.setFailed(`❌ ${major.length} unresolved CRITICAL/MAJOR CodeRabbit thread(s)`);
-            } else {
-              const desc = minor.length > 0
-                ? `${minor.length} Minor thread(s) (non-blocking)`
-                : 'All CodeRabbit threads resolved';
-              console.log(`✅ ${desc}`);
-              await setStatus('success', desc);
-            }
+            console.log('✅ CodeRabbit disabled — gate is a no-op');
