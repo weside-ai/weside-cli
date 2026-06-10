@@ -15,10 +15,7 @@ import (
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var (
-	devMode      bool
-	authProvider string
-)
+var devMode bool
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -113,21 +110,28 @@ func loginPKCE() error {
 	}
 	cfg := res.Config
 
-	// Generate PKCE verifier + challenge
+	// Generate PKCE verifier + challenge and an OAuth state (CSRF binding).
 	verifier, err := auth.GenerateVerifier()
 	if err != nil {
 		return err
 	}
 	challenge := auth.GenerateChallenge(verifier)
-
-	// Start callback server on the resolved port.
-	server, err := auth.NewCallbackServer(cfg.CallbackPort)
+	state, err := auth.GenerateState()
 	if err != nil {
 		return err
 	}
 
-	// Open browser
-	authURL := auth.AuthorizeURL(cfg.SupabaseURL, challenge, server.RedirectURI(), authProvider)
+	// Start callback server. Try the resolved port first, then the two
+	// fallback ports — all three must be registered redirect_uris on the
+	// OAuth client (the OAuth 2.1 server validates redirect_uri exactly).
+	server, err := auth.NewCallbackServer(cfg.CallbackPort, cfg.CallbackPort+1, cfg.CallbackPort+2)
+	if err != nil {
+		return err
+	}
+	server.SetExpectedState(state)
+
+	// Open browser to the weside OAuth login page (provider choice happens there).
+	authURL := auth.AuthorizeURL(cfg.SupabaseURL, cfg.OAuthClientID, challenge, server.RedirectURI(), state)
 	fmt.Println("Opening browser for login...")
 	fmt.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
 	_ = openBrowser(authURL)
@@ -143,7 +147,7 @@ func loginPKCE() error {
 	}
 
 	// Exchange code for tokens
-	result, err := auth.ExchangeCode(cfg.SupabaseURL, cfg.SupabaseAnonKey, code, verifier)
+	result, err := auth.ExchangeCode(cfg.SupabaseURL, cfg.SupabaseAnonKey, cfg.OAuthClientID, code, verifier, server.RedirectURI())
 	if err != nil {
 		return err
 	}
@@ -201,7 +205,6 @@ func loginDev() error {
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&devMode, "dev", false, "use dev authentication (local only)")
-	authLoginCmd.Flags().StringVar(&authProvider, "provider", "google", "OAuth provider (google)")
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authWhoamiCmd)

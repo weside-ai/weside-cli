@@ -53,7 +53,7 @@ var memoriesSearchCmd = &cobra.Command{
 			title := truncate(fmt.Sprintf("%v", m["title"]), 30)
 			content := truncate(fmt.Sprintf("%v", m["content"]), 50)
 			score := "—"
-			if s, ok := m["similarity_score"]; ok && s != nil {
+			if s, ok := m["similarity"]; ok && s != nil {
 				score = fmt.Sprintf("%.2f", s)
 			}
 			rows = append(rows, []string{mtype, title, content, score})
