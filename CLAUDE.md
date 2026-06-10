@@ -105,8 +105,8 @@ weside version  # verify
 **Do NOT use `go install`** — it doesn't inject version ldflags (`weside version` shows "dev").
 
 Users install via:
-- **Homebrew:** `brew install weside-ai/tap/weside`
-- **npm:** `npm install -g @weside-ai/cli`
+- **Homebrew:** `brew install weside-ai/tap/weside-cli`
+- **npm:** `npm install -g weside-cli`
 
 ## How to Add a New Command
 
