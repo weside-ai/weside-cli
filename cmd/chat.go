@@ -64,17 +64,15 @@ Examples:
 			return fmt.Errorf("no message provided (use -m, -f, or pipe via stdin)")
 		}
 
-		// Build request body
+		// Build request body. The backend starts a new thread whenever
+		// thread_id is absent — so --new simply omits it (and wins over -t).
 		companionIDInt, _ := strconv.Atoi(companionID)
 		body := map[string]any{
 			"companion_id": companionIDInt,
 			"content":      message,
 			"stream":       chatStream,
 		}
-		if chatNewThread {
-			body["new_thread"] = true
-		}
-		if chatThreadID != "" {
+		if chatThreadID != "" && !chatNewThread {
 			body["thread_id"] = chatThreadID
 		}
 
@@ -177,8 +175,17 @@ func sendStreaming(client interface {
 	defer func() { _ = resp.Body.Close() }()
 
 	scanner := bufio.NewScanner(resp.Body)
+	// A single message_complete frame carries the full message plus trace
+	// items and can exceed bufio.Scanner's default 64 KiB line cap — give it
+	// room so large completions don't abort the stream mid-read.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	streamed := false   // any incremental delta printed?
+	var fallback string // message_complete text, used only if no deltas arrived
 	for scanner.Scan() {
 		line := scanner.Text()
+		// Wire shape: `event: <type>\n` then `data: <json>\n\n`. Route on the
+		// `type` field inside the data payload rather than the event: line.
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -187,28 +194,53 @@ func sendStreaming(client interface {
 			break
 		}
 
-		// Parse SSE event as JSON
 		var event map[string]any
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			continue
 		}
 
-		// Extract text from content blocks [{type: "text", text: "..."}]
-		if content, ok := event["content"].([]any); ok {
-			for _, block := range content {
-				if b, ok := block.(map[string]any); ok {
-					if text, ok := b["text"].(string); ok {
-						fmt.Print(text)
-					}
-				}
+		switch event["type"] {
+		case "message_delta":
+			if delta, ok := event["delta"].(string); ok && delta != "" {
+				fmt.Print(delta)
+				streamed = true
 			}
-		} else if text, ok := event["text"].(string); ok {
-			fmt.Print(text)
+		case "message_complete":
+			fallback = extractCompleteText(event)
 		}
 	}
-	fmt.Println()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
 
-	return scanner.Err()
+	// No deltas (e.g. a non-incremental backend) → print the final text once.
+	if !streamed && fallback != "" {
+		fmt.Print(ui.RenderMarkdown(fallback))
+	}
+	fmt.Println()
+	return nil
+}
+
+// extractCompleteText pulls the assistant text from a message_complete event:
+// {assistant_message: {content: [{type: "text", text: "..."}]}}.
+func extractCompleteText(event map[string]any) string {
+	msg, ok := event["assistant_message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	content, ok := msg["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	for _, block := range content {
+		if b, ok := block.(map[string]any); ok {
+			if text, ok := b["text"].(string); ok {
+				sb.WriteString(text)
+			}
+		}
+	}
+	return sb.String()
 }
 
 func init() {

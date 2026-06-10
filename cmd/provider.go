@@ -105,7 +105,9 @@ var providerSetCmd = &cobra.Command{
 			return err
 		}
 
-		body := map[string]any{"preset_id": presetID}
+		// PUT /data-residency/ is a discriminated union on `type`; a weside
+		// preset requires the "weside" discriminator alongside preset_id.
+		body := map[string]any{"type": "weside", "preset_id": presetID}
 		if err := client.Put(context.Background(), "/data-residency/", body, nil); err != nil {
 			return fmt.Errorf("setting provider: %w", err)
 		}

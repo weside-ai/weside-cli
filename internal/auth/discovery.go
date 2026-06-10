@@ -25,7 +25,11 @@ type Config struct {
 	SupabaseAnonKey string `json:"supabase_anon_key" mapstructure:"supabase_anon_key"`
 	CallbackPort    int    `json:"callback_port"    mapstructure:"callback_port"`
 	MCPURL          string `json:"mcp_url"          mapstructure:"mcp_url"`
-	FetchedAt       string `json:"fetched_at,omitempty" mapstructure:"fetched_at,omitempty"`
+	// OAuthClientID is the registered public/PKCE OAuth client the CLI uses for
+	// the OAuth 2.1 login flow. Optional in the well-known response (older
+	// backends omit it) — callers fall back to defaultOAuthClientID.
+	OAuthClientID string `json:"oauth_client_id,omitempty" mapstructure:"oauth_client_id,omitempty"`
+	FetchedAt     string `json:"fetched_at,omitempty" mapstructure:"fetched_at,omitempty"`
 }
 
 // ResolveSource identifies which precedence level produced a Config.
@@ -51,6 +55,12 @@ const (
 	defaultSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxeWtyd3BtaGpxamhwc25qeGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5ODU3NDksImV4cCI6MjA4NTU2MTc0OX0.ADx_HD7O-xNMx-j4MDrhaJbRO71R-hJO6yTcf5wFWUA"
 	defaultCallbackPort    = 18520
 	defaultMCPURL          = "https://api.weside.ai/mcp/"
+	// defaultOAuthClientID is the public PKCE OAuth client registered for the
+	// CLI in the Supabase dashboard (project pqykrwpmhjqjhpsnjxbd, OAuth Server).
+	// Public by spec — a PKCE client has no client_secret, so this value is not
+	// sensitive (mirrors how supabase_url/anon_key are already shipped here).
+	// Registered redirect_uris: http://localhost:18520-18522/callback.
+	defaultOAuthClientID = "91aa6153-6a70-4e91-8c7c-bd89de775ad8"
 )
 
 var discoveryHTTPClient = &http.Client{Timeout: 5 * time.Second}
@@ -148,6 +158,11 @@ func Fetch(ctx context.Context, apiURL string) (*Config, error) {
 	if cfg.SupabaseURL == "" || cfg.SupabaseAnonKey == "" || cfg.CallbackPort == 0 || cfg.MCPURL == "" {
 		return nil, errors.New("well-known response is missing required fields")
 	}
+	// oauth_client_id is optional — older backends omit it. Fall back to the
+	// hardcoded default so login keeps working against them.
+	if cfg.OAuthClientID == "" {
+		cfg.OAuthClientID = defaultOAuthClientID
+	}
 	cfg.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	return &cfg, nil
 }
@@ -173,6 +188,7 @@ func overrideConfig() (*Config, error) {
 		SupabaseAnonKey: key,
 		CallbackPort:    defaultCallbackPort,
 		MCPURL:          defaultMCPURL,
+		OAuthClientID:   defaultOAuthClientID,
 	}, nil
 }
 
@@ -184,11 +200,16 @@ func loadCachedAuth() (*Config, bool) {
 	if url == "" || key == "" || port == 0 || mcp == "" {
 		return nil, false
 	}
+	clientID := strings.TrimSpace(viper.GetString("auth.oauth_client_id"))
+	if clientID == "" {
+		clientID = defaultOAuthClientID
+	}
 	return &Config{
 		SupabaseURL:     url,
 		SupabaseAnonKey: key,
 		CallbackPort:    port,
 		MCPURL:          mcp,
+		OAuthClientID:   clientID,
 		FetchedAt:       viper.GetString("auth.fetched_at"),
 	}, true
 }
@@ -209,6 +230,7 @@ func SaveCachedAuth(cfg *Config) error {
 		"supabase_anon_key": cfg.SupabaseAnonKey,
 		"callback_port":     cfg.CallbackPort,
 		"mcp_url":           cfg.MCPURL,
+		"oauth_client_id":   cfg.OAuthClientID,
 		"fetched_at":        cfg.FetchedAt,
 	}
 	if err := config.PersistUpdates(map[string]any{"auth": authBlock}); err != nil {
@@ -220,6 +242,7 @@ func SaveCachedAuth(cfg *Config) error {
 	viper.Set("auth.supabase_anon_key", cfg.SupabaseAnonKey)
 	viper.Set("auth.callback_port", cfg.CallbackPort)
 	viper.Set("auth.mcp_url", cfg.MCPURL)
+	viper.Set("auth.oauth_client_id", cfg.OAuthClientID)
 	viper.Set("auth.fetched_at", cfg.FetchedAt)
 	return nil
 }
@@ -230,5 +253,6 @@ func defaultConfig() *Config {
 		SupabaseAnonKey: defaultSupabaseAnonKey,
 		CallbackPort:    defaultCallbackPort,
 		MCPURL:          defaultMCPURL,
+		OAuthClientID:   defaultOAuthClientID,
 	}
 }
