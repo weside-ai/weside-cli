@@ -1,9 +1,13 @@
 package auth_test
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/weside-ai/weside-cli/internal/auth"
 )
@@ -257,4 +261,79 @@ func TestRefreshAccessToken_Non2xx(t *testing.T) {
 	if _, err := auth.RefreshAccessToken(srv.URL, "anon", "client", "expired"); err == nil {
 		t.Error("RefreshAccessToken should error on non-2xx response")
 	}
+}
+
+// TestCallbackServer_StateMismatchRejected exercises the CSRF guard: a callback
+// whose `state` does not match the expected value must surface an error from
+// WaitForCode rather than yielding a code.
+func TestCallbackServer_StateMismatchRejected(t *testing.T) {
+	srv, err := auth.NewCallbackServer(18546)
+	if err != nil {
+		t.Skipf("port 18546 unavailable: %v", err)
+	}
+	srv.SetExpectedState("good-state")
+
+	go func() {
+		resp, gerr := http.Get(srv.RedirectURI() + "?code=abc&state=evil")
+		if gerr == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := srv.WaitForCode(ctx); err == nil {
+		t.Fatal("WaitForCode should reject a state mismatch")
+	}
+}
+
+// TestCallbackServer_ValidStateReturnsCode is the happy-path counterpart: a
+// matching state yields the authorization code.
+func TestCallbackServer_ValidStateReturnsCode(t *testing.T) {
+	srv, err := auth.NewCallbackServer(18547)
+	if err != nil {
+		t.Skipf("port 18547 unavailable: %v", err)
+	}
+	srv.SetExpectedState("good-state")
+
+	go func() {
+		resp, gerr := http.Get(srv.RedirectURI() + "?code=the-code&state=good-state")
+		if gerr == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	code, err := srv.WaitForCode(ctx)
+	if err != nil {
+		t.Fatalf("WaitForCode error: %v", err)
+	}
+	if code != "the-code" {
+		t.Errorf("code = %q, want the-code", code)
+	}
+}
+
+// TestNewCallbackServer_PortFallback verifies the multi-port retry: when the
+// primary port is occupied, the server binds the next candidate and reports the
+// fallback port in RedirectURI (which must match a registered redirect_uri).
+func TestNewCallbackServer_PortFallback(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:18548")
+	if err != nil {
+		t.Skipf("port 18548 unavailable: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	srv, err := auth.NewCallbackServer(18548, 18549)
+	if err != nil {
+		t.Fatalf("NewCallbackServer error: %v", err)
+	}
+	if !strings.HasSuffix(srv.RedirectURI(), ":18549/callback") {
+		t.Errorf("RedirectURI = %q, want fallback port 18549", srv.RedirectURI())
+	}
+
+	// Let the fallback server shut down cleanly (WaitForCode shuts it down).
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, _ = srv.WaitForCode(ctx)
 }

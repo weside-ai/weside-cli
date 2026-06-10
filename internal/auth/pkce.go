@@ -115,7 +115,7 @@ func NewCallbackServer(ports ...int) (*CallbackServer, error) {
 
 		go func() {
 			if serveErr := cs.server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-				cs.errCh <- serveErr
+				cs.sendErr(serveErr)
 			}
 		}()
 
@@ -123,6 +123,24 @@ func NewCallbackServer(ports ...int) (*CallbackServer, error) {
 	}
 
 	return nil, fmt.Errorf("starting callback server on ports %v (is another login running?): %w", ports, lastErr)
+}
+
+// sendCode / sendErr deliver the first callback outcome without ever blocking.
+// The channels are buffered with capacity 1; a second callback (browser retry,
+// CSRF probe) must not leave its handler goroutine parked on a full channel —
+// the first result wins, the rest are dropped.
+func (cs *CallbackServer) sendCode(code string) {
+	select {
+	case cs.codeCh <- code:
+	default:
+	}
+}
+
+func (cs *CallbackServer) sendErr(err error) {
+	select {
+	case cs.errCh <- err:
+	default:
+	}
 }
 
 // SetExpectedState binds the callback handler to an expected OAuth `state`.
@@ -159,7 +177,7 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 	if cs.expectedState != "" && q.Get("state") != cs.expectedState {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = fmt.Fprint(w, `<html><body><h2>Login failed</h2><p>State mismatch — the login response could not be verified. Please try again.</p><p>You can close this tab.</p></body></html>`)
-		cs.errCh <- fmt.Errorf("auth callback: state mismatch (possible CSRF) — please retry login")
+		cs.sendErr(fmt.Errorf("auth callback: state mismatch (possible CSRF) — please retry login"))
 		return
 	}
 
@@ -174,13 +192,13 @@ func (cs *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request)
 		}
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = fmt.Fprintf(w, `<html><body><h2>Login failed</h2><p>%s</p><p>You can close this tab.</p></body></html>`, html.EscapeString(errMsg))
-		cs.errCh <- fmt.Errorf("auth callback: %s", errMsg)
+		cs.sendErr(fmt.Errorf("auth callback: %s", errMsg))
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = fmt.Fprint(w, `<html><body><h2>Login successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>`)
-	cs.codeCh <- code
+	cs.sendCode(code)
 }
 
 // oauthToken posts an OAuth 2.1 token request (form-encoded, RFC 6749) to the

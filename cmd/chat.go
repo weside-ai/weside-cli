@@ -214,8 +214,11 @@ func sendStreaming(client interface {
 	}
 
 	// No deltas (e.g. a non-incremental backend) → print the final text once.
+	// Streaming output stays raw throughout: deltas can't be markdown-rendered
+	// incrementally, so the fallback prints raw too for a consistent --stream
+	// experience (markdown rendering is the non-streaming path's job).
 	if !streamed && fallback != "" {
-		fmt.Print(ui.RenderMarkdown(fallback))
+		fmt.Print(fallback)
 	}
 	fmt.Println()
 	return nil
