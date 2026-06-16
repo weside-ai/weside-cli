@@ -60,7 +60,7 @@ jobs:
             Post ONE comment via `gh pr comment`. End with verdict:
             <!-- VERDICT:BLOCKING/WARNING/PASS -->
 
-          claude_args: "--allowedTools Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
+          claude_args: "--model claude-sonnet-4-6 --allowedTools Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
 
       - name: Check for blocking issues
         env:
