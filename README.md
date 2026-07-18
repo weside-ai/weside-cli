@@ -34,8 +34,8 @@ go install github.com/weside-ai/weside-cli@latest
 ## Quick Start
 
 ```bash
-# Log in (dev mode for local development)
-weside auth login --dev
+# Log in (opens your browser for OAuth login — choose Google, Apple, or email)
+weside auth login
 
 # List your Companions
 weside companions list
@@ -50,7 +50,7 @@ weside chat -m "Hey, how are you?"
 weside chat --stream -m "Tell me a story"
 ```
 
-> **Note:** Production login (`weside auth login` without `--dev`) is not yet implemented. Use `--dev` for local development or set `WESIDE_TOKEN` for CI/headless use.
+> **Note:** `weside auth login` opens your browser and runs a full OAuth login (PKCE) against weside.ai — pick Google, Apple, or email, and credentials are stored in `~/.weside/credentials.json`. Use `--dev` against a local backend for development, or set `WESIDE_TOKEN` for CI/headless use.
 
 ## Commands
 
@@ -58,6 +58,7 @@ weside chat --stream -m "Tell me a story"
 
 | Command | Description |
 |---------|-------------|
+| `weside auth login` | Log in via browser (OAuth/PKCE — Google, Apple, or email) |
 | `weside auth login --dev` | Log in (dev mode, local backend) |
 | `weside auth logout` | Log out and remove stored credentials |
 | `weside auth whoami` | Show current authenticated user |
