@@ -8,6 +8,9 @@ coverage.out
 # GoReleaser
 dist/
 
+# Generated Graphify knowledge graph and cache
+/graphify-out/
+
 # IDE
 .idea/
 .vscode/
