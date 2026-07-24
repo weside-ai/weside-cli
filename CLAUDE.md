@@ -45,7 +45,17 @@ weside-cli/
 │   ├── rooms.go            # rooms list/show/delete (v2)
 │   ├── rooms_debug.go      # rooms trace/participants/tool-call/cancel/undo/context-break/rename/group/dm (v2)
 │   ├── memories.go         # memories search/list
+│   ├── memories_edit.go    # memories get/delete/update/edit
 │   ├── goals.go            # goals list/update
+│   ├── goals_edit.go       # goals edit/reorder
+│   ├── skills.go           # companions skills list/available/install/set/uninstall
+│   ├── prompts.go          # companions resume/prompts/identity/tools
+│   ├── files.go            # files tree/quota/delete
+│   ├── notes.go            # notes list/get/search + notes-repo + notes-pat
+│   ├── account.go          # me usage, user-config, sandbox-secrets
+│   ├── account_extras.go   # provider byok-test/discover, config system
+│   ├── p3_ops.go           # referrals, circles, plans, billing, channels, experts, safety
+│   ├── p3_companion.go     # evolution, reminders, mentor-sessions, subscriptions, me-account, integrations
 │   ├── provider.go         # provider show/presets/set/byok
 │   ├── tools.go            # tools discover (stub)
 │   ├── config.go           # config show/set
@@ -152,6 +162,8 @@ for _, item := range companions {
   - **Auth-config discovery:** `internal/auth/discovery.go` resolves Supabase URL + anon-key + callback port + MCP URL + OAuth client_id via `Resolve()`. Precedence: `--supabase-url`/`--supabase-anon-key` flags (must be set together) → `WESIDE_SUPABASE_URL` / `WESIDE_SUPABASE_ANON_KEY` env (must be set together) → `~/.weside/config.yaml` `auth.*` cache → live GET `<api_url>/.well-known/weside-auth` (5s timeout, response cached) → hardcoded fallback constants in `discovery.go`. `oauth_client_id` is an **optional** well-known field (older backends omit it → hardcoded default `91aa6153-…`, a public PKCE client, non-sensitive). Run `weside config refresh-auth` to force-refresh the cache. AC-6 (auto-refresh on 401) is deferred — there is no existing CLI refresh flow to wrap.
 - **Chat (v2, WA-1548):** Room-based. `weside chat <companion> -m "…"` resolves the companion's DM room (`POST /api/v2/rooms/dm/{companion_id}`), opens the room SSE subscription (`GET /api/v2/rooms/{room_id}/events`), and only then sends (`POST /api/v2/rooms/{room_id}/messages`). The reply arrives over the stream as `room_message_delta` (live with `--stream`) / `room_message_complete` (fallback when no deltas). A `client_message_id` idempotency key is sent on every POST. Threads no longer exist — the room is the conversation.
 - **Rooms (v2):** `rooms list/show/delete` plus the debug surface in `cmd/rooms_debug.go`: `rooms trace <id>` (checkpoint trace), `rooms participants <id>`, `rooms tool-call <id> <tcid>`, `rooms cancel <id> --confirm`, `rooms undo <id> --confirm`, `rooms context-break <id> --confirm`, `rooms rename <id> <title>`, `rooms group --companions …`, `rooms dm <companion_id>`. All on `/api/v2/rooms/*`; side-effecting commands gated by `--confirm`. `rooms events <id>` (live SSE mitschnitt) and invite CRUD are Follow-ups.
+- **Ops & account (v1):** `files tree/quota/delete`, `me usage [--month] [--daily]`, `user-config get/set/delete`, `sandbox-secrets list/presets/put/delete` (masked), `config system [key]`, `notes list/get/search`, `notes-repo status/repair`, `notes-pat list/mint/revoke`, `provider byok-test/byok-discover`.
+- **Lower-frequency (v1/v2):** `referrals list/create/revoke/stats`, `circles list/create/delete`, `plans show/me`, `billing usage/purchase-eligibility`, `channels list/set-active`, `experts list/befriend`, `evolution current/start/dismiss/presets`, `reminders list/dismiss`, `mentor-sessions <companion>`, `subscriptions list/toggle`, `me-account profile/profile-set/locale/sliding-window/export/deactivate`, `integrations list/catalog/disconnect/reconcile`, `safety block/unblock`. List tables are best-effort (first array in the response); `--json` gives the exact wire shape.
 - **Tools:** `discover` attempts MCP call, `schema` and `exec` are stubs.
 - **Output:** Plain text, no colors/styling (lipgloss/glamour not yet integrated).
 - **Memories/Goals:** `memories search/list/save` (v1 + MCP) plus `memories get/delete/update/edit` (metadata + content versioning). `goals list/update(by title)/save` plus `goals edit/reorder`. New write commands take `--companion` (defaults to the selected companion).
