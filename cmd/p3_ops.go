@@ -56,11 +56,26 @@ var referralsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		var result map[string]any
-		if err := client.Get(context.Background(), "/referrals/codes", &result); err != nil {
+		// GET /referrals/codes returns a bare JSON array, not an envelope.
+		var items []any
+		if err := client.Get(context.Background(), "/referrals/codes", &items); err != nil {
 			return fmt.Errorf("listing referrals: %w", err)
 		}
-		printListOrJSON(result, []string{"code", "status", "created_at"})
+		if IsJSON() {
+			ui.PrintJSON(items)
+			return nil
+		}
+		headers := []string{"CODE", "STATUS", "CREATED"}
+		var rows [][]string
+		for _, item := range items {
+			m, _ := item.(map[string]any)
+			rows = append(rows, []string{
+				fmt.Sprintf("%v", m["code"]),
+				fmt.Sprintf("%v", m["status"]),
+				truncate(fmt.Sprintf("%v", m["created_at"]), 25),
+			})
+		}
+		ui.PrintTable(headers, rows)
 		return nil
 	},
 }
