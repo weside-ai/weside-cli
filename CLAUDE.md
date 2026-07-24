@@ -38,6 +38,9 @@ weside-cli/
 │   ├── root.go             # Root command + global flags + Viper init
 │   ├── auth.go             # auth login/logout/whoami/token
 │   ├── companions.go       # companions list/show/create/select/update/delete
+│   ├── skills.go           # companions skills list/available/install/set/uninstall
+│   ├── prompts.go          # companions resume/prompts versions/show/restore, identity show/set, tools list/set
+│   ├── triggers.go         # triggers list/toggle/set/delete
 │   ├── chat.go             # chat (v2 rooms SSE: resolve DM room, subscribe, send)
 │   ├── rooms.go            # rooms list/show/delete (v2)
 │   ├── rooms_debug.go      # rooms trace/participants/tool-call/cancel/undo/context-break/rename/group/dm (v2)
@@ -151,8 +154,9 @@ for _, item := range companions {
 - **Rooms (v2):** `rooms list/show/delete` plus the debug surface in `cmd/rooms_debug.go`: `rooms trace <id>` (checkpoint trace), `rooms participants <id>`, `rooms tool-call <id> <tcid>`, `rooms cancel <id> --confirm`, `rooms undo <id> --confirm`, `rooms context-break <id> --confirm`, `rooms rename <id> <title>`, `rooms group --companions …`, `rooms dm <companion_id>`. All on `/api/v2/rooms/*`; side-effecting commands gated by `--confirm`. `rooms events <id>` (live SSE mitschnitt) and invite CRUD are Follow-ups.
 - **Tools:** `discover` attempts MCP call, `schema` and `exec` are stubs.
 - **Output:** Plain text, no colors/styling (lipgloss/glamour not yet integrated).
-- **Memories/Goals:** Read-only (creation happens through Companion conversations).
-- **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` available. Media upload, tools management, and system-prompt versioning/restore are Follow-ups.
+- **Memories/Goals:** `memories search/list/save` (v1 + MCP) plus `memories get/delete/update/edit` (metadata + content versioning). `goals list/update(by title)/save` plus `goals edit/reorder`. New write commands take `--companion` (defaults to the selected companion).
+- **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` plus `companions skills list/available/install/set/uninstall`, `companions resume`, `companions prompts versions/show/restore`, `companions identity show/set`, `companions tools list/set`. Media upload is a Follow-up.
+- **Triggers:** `triggers list/toggle/set/delete <companion>` — debug why a trigger fires or not.
 
 ---
 
