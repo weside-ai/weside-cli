@@ -7,11 +7,13 @@ import (
 	"net/url"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var memoryType string
+var (
+	memoryType   string
+	memCompanion string
+)
 
 var memoriesCmd = &cobra.Command{
 	Use:   "memories",
@@ -23,14 +25,13 @@ var memoriesSearchCmd = &cobra.Command{
 	Short: "Search memories semantically",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := newAuthenticatedClient()
+		companionID, err := resolveCompanion(memCompanion)
 		if err != nil {
 			return err
 		}
-
-		companionID := viper.GetString("default_companion_id")
-		if companionID == "" {
-			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
 		}
 
 		path := fmt.Sprintf("/companions/%s/memories/search?q=%s", companionID, url.QueryEscape(args[0]))
@@ -68,14 +69,13 @@ var memoriesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List memories",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		client, err := newAuthenticatedClient()
+		companionID, err := resolveCompanion(memCompanion)
 		if err != nil {
 			return err
 		}
-
-		companionID := viper.GetString("default_companion_id")
-		if companionID == "" {
-			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
 		}
 
 		path := fmt.Sprintf("/companions/%s/memories", companionID)
@@ -170,6 +170,8 @@ var memoriesSaveCmd = &cobra.Command{
 }
 
 func init() {
+	memoriesSearchCmd.Flags().StringVar(&memCompanion, "companion", "", "companion id or name (default: selected companion)")
+	memoriesListCmd.Flags().StringVar(&memCompanion, "companion", "", "companion id or name (default: selected companion)")
 	memoriesListCmd.Flags().StringVar(&memoryType, "type", "", "filter by type (fact, preference, experience, reflection)")
 
 	memoriesSaveCmd.Flags().StringVar(&memorySaveContent, "content", "", "memory content (required)")

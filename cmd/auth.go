@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -77,17 +80,83 @@ var authWhoamiCmd = &cobra.Command{
 	},
 }
 
+var authTokenDecode bool
+
 var authTokenCmd = &cobra.Command{
-	Use:   "token",
+	Use:   "token [--decode]",
 	Short: "Print the current access token (for scripting)",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		token, err := auth.GetToken()
 		if err != nil {
 			return err
 		}
+		if authTokenDecode {
+			return printDecodedJWT(token)
+		}
 		_, _ = fmt.Fprint(os.Stdout, token)
 		return nil
 	},
+}
+
+// printDecodedJWT decodes the JWT payload (middle segment) and prints its
+// claims. No signature verification — display only, for debugging 401s.
+func printDecodedJWT(token string) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("not a JWT (expected 3 dot-separated parts, got %d)", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return fmt.Errorf("decoding JWT payload: %w", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return fmt.Errorf("parsing JWT claims: %w", err)
+	}
+
+	if IsJSON() {
+		ui.PrintJSON(claims)
+		return nil
+	}
+	fmt.Printf("sub:        %v\n", claims["sub"])
+	if email, ok := claims["email"]; ok {
+		fmt.Printf("email:      %v\n", email)
+	}
+	if role, ok := claims["role"]; ok {
+		fmt.Printf("role:       %v\n", role)
+	}
+	if isAnon, ok := claims["is_anonymous"]; ok {
+		fmt.Printf("anonymous:  %v\n", isAnon)
+	}
+	if exp, ok := claims["exp"]; ok {
+		printJWTExp(exp)
+	}
+	if iat, ok := claims["iat"]; ok {
+		fmt.Printf("issued:     %v\n", timeFromUnix(iat))
+	}
+	return nil
+}
+
+func printJWTExp(exp any) {
+	switch v := exp.(type) {
+	case float64:
+		t := time.Unix(int64(v), 0).UTC()
+		remaining := time.Until(t).Round(time.Second)
+		if remaining > 0 {
+			fmt.Printf("expires:    %s (in %s)\n", t.Format(time.RFC3339), remaining)
+		} else {
+			fmt.Printf("expires:    %s (EXPIRED %s ago)\n", t.Format(time.RFC3339), -remaining)
+		}
+	default:
+		fmt.Printf("expires:    %v\n", exp)
+	}
+}
+
+func timeFromUnix(v any) string {
+	if f, ok := v.(float64); ok {
+		return time.Unix(int64(f), 0).UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func loginPKCE() error {
@@ -205,6 +274,7 @@ func loginDev() error {
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&devMode, "dev", false, "use dev authentication (local only)")
+	authTokenCmd.Flags().BoolVar(&authTokenDecode, "decode", false, "decode the JWT and print its claims")
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authWhoamiCmd)

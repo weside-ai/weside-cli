@@ -113,7 +113,7 @@ func TestRoomsTracePrintsToolCall(t *testing.T) {
 		for _, item := range messages {
 			m, _ := item.(map[string]any)
 			fmt.Printf("[%s] %s\n", roleLabel(fmt.Sprintf("%v", m["role"])), m["created_at"])
-			printTraceItems(m["trace_items"])
+			printTraceItems(m["trace_items"], false)
 		}
 		return nil
 	})

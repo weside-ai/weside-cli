@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
@@ -68,18 +70,34 @@ var roomsListCmd = &cobra.Command{
 	},
 }
 
+var (
+	roomsShowCursor string
+	roomsShowAfter  string
+	roomsShowLimit  int
+)
+
 var roomsShowCmd = &cobra.Command{
 	Use:   "show <room_id>",
 	Short: "Show messages in a room timeline",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClientV2()
 		if err != nil {
 			return err
 		}
 
+		path := "/rooms/" + args[0] + "/messages?"
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(roomsShowLimit))
+		if cmd.Flags().Changed("cursor") {
+			q.Set("before", roomsShowCursor)
+		}
+		if cmd.Flags().Changed("after") {
+			q.Set("after", roomsShowAfter)
+		}
+
 		var result map[string]any
-		if err := client.Get(context.Background(), "/rooms/"+args[0]+"/messages", &result); err != nil {
+		if err := client.Get(context.Background(), path+q.Encode(), &result); err != nil {
 			return fmt.Errorf("getting room timeline: %w", err)
 		}
 
@@ -104,7 +122,10 @@ var roomsShowCmd = &cobra.Command{
 			}
 		}
 		if next, _ := result["next_cursor"].(string); next != "" {
-			fmt.Printf("(more: --cursor %s)\n", next)
+			fmt.Printf("(older: --cursor %s)\n", next)
+		}
+		if prev, _ := result["prev_cursor"].(string); prev != "" {
+			fmt.Printf("(newer: --after %s)\n", prev)
 		}
 		return nil
 	},
@@ -151,6 +172,9 @@ func roleLabel(role string) string {
 }
 
 func init() {
+	roomsShowCmd.Flags().IntVar(&roomsShowLimit, "limit", 50, "max messages (1-100)")
+	roomsShowCmd.Flags().StringVar(&roomsShowCursor, "cursor", "", "older-page cursor (from next_cursor)")
+	roomsShowCmd.Flags().StringVar(&roomsShowAfter, "after", "", "newer-page cursor (from prev_cursor)")
 	roomsCmd.AddCommand(roomsListCmd)
 	roomsCmd.AddCommand(roomsShowCmd)
 	roomsCmd.AddCommand(roomsDeleteCmd)

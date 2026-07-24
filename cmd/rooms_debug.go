@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,12 +20,15 @@ import (
 
 var (
 	roomsTraceLimit        int
+	roomsTraceFull         bool
 	roomsConfirm           bool
 	roomsCancelServerMsgID string
 	roomsCancelPartial     string
 	roomsRenameClear       bool
 	roomsGroupCompanions   string
 	roomsGroupTitle        string
+	eventsSince            string
+	eventsRaw              bool
 )
 
 var roomsTraceCmd = &cobra.Command{
@@ -62,7 +67,7 @@ var roomsTraceCmd = &cobra.Command{
 				fmt.Printf("  (%s)", msgID)
 			}
 			fmt.Println()
-			printTraceItems(m["trace_items"])
+			printTraceItems(m["trace_items"], roomsTraceFull)
 			fmt.Println()
 		}
 		return nil
@@ -70,7 +75,8 @@ var roomsTraceCmd = &cobra.Command{
 }
 
 // printTraceItems renders the slim trace (tool calls + reminders) under a message.
-func printTraceItems(raw any) {
+// Tool output is truncated unless full is true.
+func printTraceItems(raw any, full bool) {
 	items, _ := raw.([]any)
 	for _, it := range items {
 		item, _ := it.(map[string]any)
@@ -81,7 +87,11 @@ func printTraceItems(raw any) {
 			output, _ := item["tool_output"].(string)
 			fmt.Printf("  - tool_call %s(%s)", name, args)
 			if output != "" && output != "<nil>" {
-				fmt.Printf(" -> %s", truncate(output, 200))
+				if full {
+					fmt.Printf(" -> %s", output)
+				} else {
+					fmt.Printf(" -> %s", truncate(output, 200))
+				}
 			}
 			fmt.Println()
 		case "reminder":
@@ -397,8 +407,181 @@ func asSlice(v any) []any {
 	return s
 }
 
+// roomsEventsCmd — raw SSE mitschnitt of a room's event stream. Prints every
+// frame (known and unknown types) for debugging; unlike `chat` it does not
+// interpret or wait for a turn to end.
+var roomsEventsCmd = &cobra.Command{
+	Use:   "events <room_id>",
+	Short: "Stream raw room SSE events (debug)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		path := "/rooms/" + args[0] + "/events"
+		if eventsSince != "" {
+			path += "?since=" + eventsSince
+		}
+		resp, err := client.Subscribe(context.Background(), path)
+		if err != nil {
+			return fmt.Errorf("opening event stream: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+		var (
+			curID, eventType string
+			dataLines        []string
+			flush            = func() {
+				if eventType == "" && curID == "" && len(dataLines) == 0 {
+					return
+				}
+				data := strings.Join(dataLines, "\n")
+				if eventsRaw {
+					fmt.Printf("%s %s %s\n", orDash(eventType), orDash(curID), data)
+				} else {
+					if curID != "" {
+						fmt.Printf("id: %s\n", curID)
+					}
+					if eventType != "" {
+						fmt.Printf("event: %s\n", eventType)
+					}
+					if data != "" {
+						fmt.Printf("data: %s\n", prettyData(data))
+					}
+					fmt.Println()
+				}
+				curID, eventType = "", ""
+				dataLines = nil
+			}
+		)
+		for scanner.Scan() {
+			line := scanner.Text()
+			switch {
+			case line == "":
+				flush()
+			case strings.HasPrefix(line, ":"):
+				// SSE comment (e.g. ":heartbeat") — surface it.
+				if !eventsRaw {
+					fmt.Printf("%s\n", line)
+				}
+			case strings.HasPrefix(line, "id: "):
+				curID = strings.TrimPrefix(line, "id: ")
+			case strings.HasPrefix(line, "event: "):
+				eventType = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "data: "):
+				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+			}
+		}
+		flush()
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("reading event stream: %w", err)
+		}
+		return nil
+	},
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// prettyData re-indents a JSON data line for readability; returns the input
+// unchanged if it is not JSON.
+func prettyData(data string) string {
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, []byte(data), "  ", "  ") == nil {
+		return "\n  " + pretty.String()
+	}
+	return data
+}
+
+// rooms invites subgroup — list/create/revoke room invites.
+var roomsInvitesCmd = &cobra.Command{
+	Use:   "invites",
+	Short: "Manage a group room's invites",
+}
+
+var roomsInvitesListCmd = &cobra.Command{
+	Use:   "list <room_id>",
+	Short: "List a room's active invites",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		var result map[string]any
+		if err := client.Get(context.Background(), "/rooms/"+args[0]+"/invites", &result); err != nil {
+			return fmt.Errorf("listing invites: %w", err)
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		invites, _ := result["invites"].([]any)
+		headers := []string{"ID", "CODE", "EXPIRES"}
+		var rows [][]string
+		for _, item := range invites {
+			inv, _ := item.(map[string]any)
+			rows = append(rows, []string{
+				fmt.Sprintf("%v", inv["id"]),
+				fmt.Sprintf("%v", inv["code"]),
+				fmt.Sprintf("%v", inv["expires_at"]),
+			})
+		}
+		ui.PrintTable(headers, rows)
+		return nil
+	},
+}
+
+var roomsInvitesCreateCmd = &cobra.Command{
+	Use:   "create <room_id>",
+	Short: "Mint a 7-day multi-use invite for a group room",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		var result map[string]any
+		if err := client.Post(context.Background(), "/rooms/"+args[0]+"/invites", nil, &result); err != nil {
+			return fmt.Errorf("creating invite: %w", err)
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Invite created: %v (expires %v)", result["code"], result["expires_at"])
+		return nil
+	},
+}
+
+var roomsInvitesRevokeCmd = &cobra.Command{
+	Use:   "revoke <room_id> <invite_id>",
+	Short: "Revoke an active invite",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		if err := client.Delete(context.Background(), "/rooms/"+args[0]+"/invites/"+args[1], nil); err != nil {
+			return fmt.Errorf("revoking invite: %w", err)
+		}
+		ui.PrintSuccess("Invite %s revoked.", args[1])
+		return nil
+	},
+}
+
 func init() {
 	roomsTraceCmd.Flags().IntVar(&roomsTraceLimit, "limit", 50, "max trace rows (1-200)")
+	roomsTraceCmd.Flags().BoolVar(&roomsTraceFull, "full", false, "show full tool output (no truncation)")
 	roomsCancelCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
 	roomsCancelCmd.Flags().StringVar(&roomsCancelServerMsgID, "server-message-id", "", "cancel a specific turn")
 	roomsCancelCmd.Flags().StringVar(&roomsCancelPartial, "partial-content", "", "persist partial content before cancelling")
@@ -408,6 +591,8 @@ func init() {
 	roomsGroupCmd.Flags().StringVar(&roomsGroupCompanions, "companions", "", "comma-separated companion ids (required)")
 	roomsGroupCmd.Flags().StringVar(&roomsGroupTitle, "title", "", "optional room title")
 	_ = roomsGroupCmd.MarkFlagRequired("companions")
+	roomsEventsCmd.Flags().StringVar(&eventsSince, "since", "", "resume from an SSE cursor")
+	roomsEventsCmd.Flags().BoolVar(&eventsRaw, "raw", false, "one line per frame: <type> <cursor> <json>")
 
 	roomsCmd.AddCommand(roomsTraceCmd)
 	roomsCmd.AddCommand(roomsParticipantsCmd)
@@ -418,4 +603,9 @@ func init() {
 	roomsCmd.AddCommand(roomsRenameCmd)
 	roomsCmd.AddCommand(roomsGroupCmd)
 	roomsCmd.AddCommand(roomsDmCmd)
+	roomsCmd.AddCommand(roomsEventsCmd)
+	roomsCmd.AddCommand(roomsInvitesCmd)
+	roomsInvitesCmd.AddCommand(roomsInvitesListCmd)
+	roomsInvitesCmd.AddCommand(roomsInvitesCreateCmd)
+	roomsInvitesCmd.AddCommand(roomsInvitesRevokeCmd)
 }
