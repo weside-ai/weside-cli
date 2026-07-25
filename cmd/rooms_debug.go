@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -426,7 +427,8 @@ var roomsEventsCmd = &cobra.Command{
 		}
 		path := "/rooms/" + args[0] + "/events"
 		if eventsSince != "" {
-			path += "?since=" + eventsSince
+			// Cursors are opaque tokens — encode so any character survives.
+			path += "?since=" + url.QueryEscape(eventsSince)
 		}
 		resp, err := client.Subscribe(cmd.Context(), path)
 		if err != nil {

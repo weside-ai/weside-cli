@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
@@ -36,12 +37,12 @@ var meUsageCmd = &cobra.Command{
 
 		path := "/me/usage"
 		if usageMonth != "" {
-			path += "?month=" + usageMonth
+			path += "?month=" + url.QueryEscape(usageMonth)
 		}
 		if usageDaily {
 			path = "/me/usage/daily"
 			if usageMonth != "" {
-				path += "?month=" + usageMonth
+				path += "?month=" + url.QueryEscape(usageMonth)
 			}
 		}
 		var result map[string]any
