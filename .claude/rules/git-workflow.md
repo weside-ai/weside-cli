@@ -51,4 +51,7 @@ Installed hooks (via `.pre-commit-config.yaml`):
 | `lint` | golangci-lint v2 | Yes |
 | `test` | go test -race + coverage | Yes |
 | `build` | Cross-compile 5 platforms | Yes (linux/amd64) |
-| `security` | govulncheck | No (continue-on-error) |
+| `security` | govulncheck | **Yes** — blocking, no continue-on-error |
+
+A vulnerability in a *called* code path fails the PR. Fix = bump the dependency
+(`go get <mod>@<fixed>` + `go mod tidy`), then verify with `make security`.
