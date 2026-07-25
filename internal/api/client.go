@@ -125,6 +125,41 @@ func (c *Client) Delete(ctx context.Context, path string, result any) error {
 	return c.do(ctx, http.MethodDelete, path, nil, result)
 }
 
+// Subscribe opens a long-lived Server-Sent-Events stream (GET) and returns the
+// raw response for the caller to read. Unlike DoRaw, it uses an http.Client
+// without a timeout — an SSE subscription outlives the 30 s request timeout
+// of c.HTTPClient, and the connection stays open until the server closes the
+// stream or the caller cancels ctx.
+func (c *Client) Subscribe(ctx context.Context, path string) (*http.Response, error) {
+	url := c.BaseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Weside-Client", "cli")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var apiErr Error
+		apiErr.StatusCode = resp.StatusCode
+		apiErr.Status = resp.Status
+		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+		return nil, &apiErr
+	}
+
+	return resp, nil
+}
+
 // DoRaw sends a request and returns the raw response (for streaming).
 func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
@@ -149,6 +184,50 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 	}
 
 	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer func() { _ = resp.Body.Close() }()
+		var apiErr Error
+		apiErr.StatusCode = resp.StatusCode
+		apiErr.Status = resp.Status
+		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+		return nil, &apiErr
+	}
+
+	return resp, nil
+}
+
+// DoRawNoTimeout is like DoRaw but uses an http.Client without a timeout —
+// for the `api` passthrough where the caller may need to read large or
+// slow responses that exceed the default 30 s request timeout.
+func (c *Client) DoRawNoTimeout(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling request body: %w", err)
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	url := c.BaseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("X-Weside-Client", "cli")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}

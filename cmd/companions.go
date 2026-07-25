@@ -395,6 +395,18 @@ func newAuthenticatedClient() (*api.Client, error) {
 	return api.NewClient(GetAPIURL()+"/api/v1", token), nil
 }
 
+// newAuthenticatedClientV2 builds a client against the /api/v2 surface — the
+// rooms/chat v2 contract (WA-1548) lives there. v1 stays the default for the
+// legacy read commands (companions, memories, goals, provider) which have not
+// been migrated; chat + rooms use v2.
+func newAuthenticatedClientV2() (*api.Client, error) {
+	token, err := auth.GetToken()
+	if err != nil {
+		return nil, err
+	}
+	return api.NewClient(GetAPIURL()+"/api/v2", token), nil
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

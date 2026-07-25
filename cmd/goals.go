@@ -6,11 +6,13 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var goalStatus string
+var (
+	goalStatus     string
+	goalsCompanion string
+)
 
 var goalsCmd = &cobra.Command{
 	Use:   "goals",
@@ -21,14 +23,13 @@ var goalsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List goals",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		client, err := newAuthenticatedClient()
+		companionID, err := resolveCompanion(goalsCompanion)
 		if err != nil {
 			return err
 		}
-
-		companionID := viper.GetString("default_companion_id")
-		if companionID == "" {
-			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
 		}
 
 		path := fmt.Sprintf("/companions/%s/memories/goals", companionID)
@@ -71,14 +72,13 @@ var goalsUpdateCmd = &cobra.Command{
 			return fmt.Errorf("--status is required (active, paused, completed)")
 		}
 
-		client, err := newAuthenticatedClient()
+		companionID, err := resolveCompanion(goalsCompanion)
 		if err != nil {
 			return err
 		}
-
-		companionID := viper.GetString("default_companion_id")
-		if companionID == "" {
-			return fmt.Errorf("no default companion set (use: weside companions select <name>)")
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
 		}
 
 		// Find goal by title across all status groups
@@ -183,6 +183,8 @@ var goalsSaveCmd = &cobra.Command{
 }
 
 func init() {
+	goalsListCmd.Flags().StringVar(&goalsCompanion, "companion", "", "companion id or name (default: selected companion)")
+	goalsUpdateCmd.Flags().StringVar(&goalsCompanion, "companion", "", "companion id or name (default: selected companion)")
 	goalsUpdateCmd.Flags().StringVar(&goalStatus, "status", "", "new status (active, paused, completed)")
 
 	goalsSaveCmd.Flags().StringVar(&goalSaveContent, "content", "", "goal description and details (required)")

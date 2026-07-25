@@ -3,25 +3,25 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
 var (
-	chatMessage   string
-	chatStream    bool
-	chatNewThread bool
-	chatThreadID  string
-	chatFile      string
+	chatMessage string
+	chatStream  bool
+	chatFile    string
 )
 
 var chatCmd = &cobra.Command{
@@ -31,55 +31,49 @@ var chatCmd = &cobra.Command{
 
 If no companion is specified, the default companion is used (set via: weside companions select).
 
+The v2 chat model is room-based: the message is sent to the companion's DM
+room, and the companion's reply arrives over the room event stream.
+
 Examples:
   weside chat -m "Hello!"
   weside chat nox -m "Tell me a story" --stream
-  weside chat --new -m "Fresh start"
   echo "Hi there" | weside chat nox`,
 	Args: cobra.MaximumNArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := newAuthenticatedClient()
-		if err != nil {
-			return err
-		}
-
-		// Resolve companion
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Companion resolution still uses v1 (companions list is v1).
 		companionArg := ""
 		if len(args) > 0 {
 			companionArg = args[0]
 		}
-
 		companionID, err := resolveCompanion(companionArg)
 		if err != nil {
 			return err
 		}
+		companionIDInt, err := strconv.Atoi(companionID)
+		if err != nil {
+			return fmt.Errorf("invalid companion id %q: %w", companionID, err)
+		}
 
-		// Get message from flag, file, or stdin
 		message, err := getMessage()
 		if err != nil {
 			return err
 		}
-
 		if message == "" {
 			return fmt.Errorf("no message provided (use -m, -f, or pipe via stdin)")
 		}
 
-		// Build request body. The backend starts a new thread whenever
-		// thread_id is absent — so --new simply omits it (and wins over -t).
-		companionIDInt, _ := strconv.Atoi(companionID)
-		body := map[string]any{
-			"companion_id": companionIDInt,
-			"content":      message,
-			"stream":       chatStream,
-		}
-		if chatThreadID != "" && !chatNewThread {
-			body["thread_id"] = chatThreadID
+		// v2 surface: resolve the DM room, then send + receive over room events.
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
 		}
 
-		if chatStream {
-			return sendStreaming(client, body)
+		roomID, err := resolveDMRoomID(client, companionIDInt)
+		if err != nil {
+			return err
 		}
-		return sendNonStreaming(client, body)
+
+		return sendChat(cmd.Context(), client, roomID, message)
 	},
 }
 
@@ -135,57 +129,55 @@ func getMessage() (string, error) {
 	return "", nil
 }
 
-func sendNonStreaming(client interface {
-	Post(ctx context.Context, path string, body any, result any) error
-}, body map[string]any,
-) error {
+// resolveDMRoomID resolves (or lazily creates) the canonical 1:1 room between
+// the caller and the companion via POST /api/v2/rooms/dm/{companion_id}.
+func resolveDMRoomID(client *api.Client, companionID int) (int, error) {
 	var result map[string]any
-	if err := client.Post(context.Background(), "/chat/send", body, &result); err != nil {
-		return fmt.Errorf("sending message: %w", err)
+	if err := client.Post(context.Background(), fmt.Sprintf("/rooms/dm/%d", companionID), nil, &result); err != nil {
+		return 0, fmt.Errorf("resolving DM room: %w", err)
 	}
-
-	if IsJSON() {
-		ui.PrintJSON(result)
-		return nil
+	switch v := result["id"].(type) {
+	case float64:
+		return int(v), nil
+	case int:
+		return v, nil
+	default:
+		return 0, fmt.Errorf("resolving DM room: unexpected room id type %T", result["id"])
 	}
-
-	// Response: assistant_message.content is [{type: "text", text: "..."}]
-	if msg, ok := result["assistant_message"].(map[string]any); ok {
-		if content, ok := msg["content"].([]any); ok {
-			for _, block := range content {
-				if b, ok := block.(map[string]any); ok {
-					if text, ok := b["text"].(string); ok {
-						fmt.Print(ui.RenderMarkdown(text))
-					}
-				}
-			}
-		}
-	}
-	return nil
 }
 
-func sendStreaming(client interface {
-	DoRaw(ctx context.Context, method, path string, body any) (*http.Response, error)
-}, body map[string]any,
-) error {
-	resp, err := client.DoRaw(context.Background(), http.MethodPost, "/chat/send", body)
+// newClientMessageID generates an idempotency key for a room message send.
+// Replaying the same key against the v2 endpoint returns the original
+// persisted message (200) instead of a duplicate or a 409.
+func newClientMessageID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "cli-" + hex.EncodeToString(b[:])
+}
+
+// sendChat opens the room SSE subscription first, waits for the `connected`
+// frame, then POSTs the message. Subscribing before sending guarantees the
+// companion's turn (room_message_start → deltas → room_message_complete) is
+// not missed — the background turn only starts after the POST returns.
+// Events are correlated by server_message_id so a pre-existing or concurrent
+// turn's events don't leak into this invocation.
+func sendChat(ctx context.Context, client *api.Client, roomID int, content string) error {
+	resp, err := client.Subscribe(ctx, fmt.Sprintf("/rooms/%d/events", roomID))
 	if err != nil {
-		return fmt.Errorf("sending message: %w", err)
+		return fmt.Errorf("opening event stream: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	scanner := bufio.NewScanner(resp.Body)
-	// A single message_complete frame carries the full message plus trace
-	// items and can exceed bufio.Scanner's default 64 KiB line cap — give it
-	// room so large completions don't abort the stream mid-read.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	streamed := false   // any incremental delta printed?
-	var fallback string // message_complete text, used only if no deltas arrived
+	sent := false
+	streamed := false
+	var turnID string              // server_message_id of our companion's turn
+	preActive := map[string]bool{} // active_turns from connected — ignore these
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Wire shape: `event: <type>\n` then `data: <json>\n\n`. Route on the
-		// `type` field inside the data payload rather than the event: line.
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -195,39 +187,125 @@ func sendStreaming(client interface {
 		}
 
 		var event map[string]any
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
+		smid, _ := event["server_message_id"].(string)
 
 		switch event["type"] {
-		case "message_delta":
+		case "connected":
+			// Note pre-existing active turns so we don't adopt their events.
+			if at, ok := event["active_turns"].([]any); ok {
+				for _, id := range at {
+					if s, ok := id.(string); ok {
+						preActive[s] = true
+					}
+				}
+			}
+			if !sent {
+				if err := postMessage(ctx, client, roomID, content); err != nil {
+					return err
+				}
+				sent = true
+			}
+		case "room_message_start":
+			// Capture our turn's correlation ID — the first start after we
+			// sent that isn't a pre-existing active turn.
+			if sent && smid != "" && !preActive[smid] && turnID == "" {
+				turnID = smid
+			}
+		case "room_message_delta":
+			// Only accept deltas for our turn, and never in JSON mode
+			// (deltas would corrupt the final JSON document).
+			if !chatStream || IsJSON() {
+				continue
+			}
+			if turnID != "" && smid != turnID {
+				continue
+			}
 			if delta, ok := event["delta"].(string); ok && delta != "" {
 				fmt.Print(delta)
 				streamed = true
 			}
-		case "message_complete":
-			fallback = extractCompleteText(event)
+		case "room_message_complete":
+			msg, _ := event["message"].(map[string]any)
+			role, _ := msg["role"].(string)
+			if role != "assistant" && role != "mentor" {
+				continue
+			}
+			if turnID != "" && smid != turnID {
+				continue
+			}
+			fallback := extractCompleteText(event)
+			if IsJSON() {
+				ui.PrintJSON(msg)
+				return nil
+			}
+			if chatStream {
+				if !streamed && fallback != "" {
+					fmt.Print(fallback)
+				}
+			} else {
+				fmt.Print(ui.RenderMarkdown(fallback))
+			}
+			fmt.Println()
+			return nil
+		case "room_turn_ended":
+			// Turn ended without a complete — cancelled, failed, timed_out.
+			if turnID != "" && smid != turnID {
+				continue
+			}
+			reason, _ := event["reason"].(string)
+			if reason == "" {
+				reason, _ = event["error_kind"].(string)
+			}
+			if reason == "" {
+				reason = "ended"
+			}
+			return fmt.Errorf("companion turn ended without a reply (%s)", reason)
+		case "error":
+			detail, _ := event["error"].(string)
+			if detail == "" {
+				detail, _ = event["message"].(string) // fallback for non-standard senders
+			}
+			if ec, ok := event["error_code"].(string); ok && ec != "" {
+				return fmt.Errorf("companion error: %s (%s)", detail, ec)
+			}
+			if detail != "" {
+				return fmt.Errorf("companion error: %s", detail)
+			}
+			return fmt.Errorf("companion error event received")
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return err
+		return fmt.Errorf("reading event stream: %w", err)
 	}
+	if !sent {
+		return fmt.Errorf("event stream closed before subscription was established")
+	}
+	return fmt.Errorf("event stream closed before the companion replied")
+}
 
-	// No deltas (e.g. a non-incremental backend) → print the final text once.
-	// Streaming output stays raw throughout: deltas can't be markdown-rendered
-	// incrementally, so the fallback prints raw too for a consistent --stream
-	// experience (markdown rendering is the non-streaming path's job).
-	if !streamed && fallback != "" {
-		fmt.Print(fallback)
+// postMessage sends the user message to the room. The v2 endpoint returns the
+// persisted user message immediately; the companion's reply arrives over the
+// room event stream that sendChat is already reading.
+func postMessage(ctx context.Context, client *api.Client, roomID int, content string) error {
+	body := map[string]any{
+		"content":           content,
+		"client_message_id": newClientMessageID(),
+		"stream":            true,
 	}
-	fmt.Println()
+	var result map[string]any
+	if err := client.Post(ctx, fmt.Sprintf("/rooms/%d/messages", roomID), body, &result); err != nil {
+		return fmt.Errorf("sending message: %w", err)
+	}
 	return nil
 }
 
-// extractCompleteText pulls the assistant text from a message_complete event:
-// {assistant_message: {content: [{type: "text", text: "..."}]}}.
+// extractCompleteText pulls the companion text from a room_message_complete
+// event: {message: {content: [{type: "text", text: "..."}]}}.
 func extractCompleteText(event map[string]any) string {
-	msg, ok := event["assistant_message"].(map[string]any)
+	msg, ok := event["message"].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -248,9 +326,7 @@ func extractCompleteText(event map[string]any) string {
 
 func init() {
 	chatCmd.Flags().StringVarP(&chatMessage, "message", "m", "", "message to send")
-	chatCmd.Flags().BoolVar(&chatStream, "stream", false, "enable streaming response")
-	chatCmd.Flags().BoolVar(&chatNewThread, "new", false, "start a new thread")
-	chatCmd.Flags().StringVarP(&chatThreadID, "thread", "t", "", "continue a specific thread")
+	chatCmd.Flags().BoolVar(&chatStream, "stream", false, "print the reply token-by-token as it streams")
 	chatCmd.Flags().StringVarP(&chatFile, "file", "f", "", "read message from file")
 	rootCmd.AddCommand(chatCmd)
 }
