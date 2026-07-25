@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var filesLimit int
+var (
+	filesLimit      int
+	filesUploadName string
+)
 
 var filesCmd = &cobra.Command{
 	Use:   "files",
@@ -112,9 +117,64 @@ var filesDeleteCmd = &cobra.Command{
 	},
 }
 
+var filesUploadCmd = &cobra.Command{
+	Use:   "upload <local-path>",
+	Short: "Upload a local file into persistent storage",
+	Long: `Upload a local file into the current user's temp/ area in persistent
+storage (JuiceFS). The remote subdirectory is resolved server-side, so the
+client does not need to know the configured path.
+
+The stored name defaults to the local basename; override it with --name.
+
+Examples:
+  weside files upload ./notes.pdf
+  weside files upload ./scratch.txt --name seed.txt`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		localPath := args[0]
+		handle, err := os.Open(localPath) //nolint:gosec // user-supplied path is the point
+		if err != nil {
+			return fmt.Errorf("opening %s: %w", localPath, err)
+		}
+		defer func() { _ = handle.Close() }()
+
+		name := filesUploadName
+		if name == "" {
+			name = filepath.Base(localPath)
+		}
+
+		q := url.Values{}
+		q.Set("name", name)
+		var result map[string]any
+		if err := client.PostStream(
+			context.Background(),
+			"/files/upload-to-temp?"+q.Encode(),
+			handle,
+			&result,
+		); err != nil {
+			return fmt.Errorf("uploading file: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Uploaded to %v (%v bytes).", result["path"], result["size_bytes"])
+		return nil
+	},
+}
+
 func init() {
 	filesTreeCmd.Flags().IntVar(&filesLimit, "limit", 500, "max entries (1-2000)")
+	filesUploadCmd.Flags().StringVar(&filesUploadName, "name", "", "stored filename (default: local basename)")
+
 	filesCmd.AddCommand(filesTreeCmd)
+	filesCmd.AddCommand(filesUploadCmd)
 	filesCmd.AddCommand(filesQuotaCmd)
 	filesCmd.AddCommand(filesDeleteCmd)
 	rootCmd.AddCommand(filesCmd)
