@@ -300,18 +300,23 @@ var roomsContextBreakCmd = &cobra.Command{
 }
 
 var roomsRenameCmd = &cobra.Command{
-	Use:   "rename <room_id> <title>",
+	Use:   "rename <room_id> [title]",
 	Short: "Set or clear a room's title",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !cmd.Flags().Changed("clear") && len(args) < 2 {
+			return fmt.Errorf("title is required (or use --clear to remove it)")
+		}
 		client, err := newAuthenticatedClientV2()
 		if err != nil {
 			return err
 		}
 
-		body := map[string]any{"title": args[1]}
+		body := map[string]any{}
 		if roomsRenameClear {
 			body["title"] = nil
+		} else {
+			body["title"] = args[1]
 		}
 		var result map[string]any
 		if err := client.Patch(context.Background(), "/rooms/"+args[0], body, &result); err != nil {
@@ -414,7 +419,7 @@ var roomsEventsCmd = &cobra.Command{
 	Use:   "events <room_id>",
 	Short: "Stream raw room SSE events (debug)",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClientV2()
 		if err != nil {
 			return err
@@ -423,7 +428,7 @@ var roomsEventsCmd = &cobra.Command{
 		if eventsSince != "" {
 			path += "?since=" + eventsSince
 		}
-		resp, err := client.Subscribe(context.Background(), path)
+		resp, err := client.Subscribe(cmd.Context(), path)
 		if err != nil {
 			return fmt.Errorf("opening event stream: %w", err)
 		}

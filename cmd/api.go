@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,7 +37,7 @@ Examples:
   weside api POST /companions --body '{"name":"x","personality":"y"}'
   weside api PATCH /companions/10 --body @patch.json`,
 	Args: cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		method := strings.ToUpper(args[0])
 		path := args[1]
 		switch method {
@@ -52,23 +51,22 @@ Examples:
 			return err
 		}
 
+		// Pass the body as json.RawMessage so it round-trips without
+		// float64 precision loss from map[string]any re-encoding.
 		var body any
-		if apiBody != "" && method != http.MethodGet && method != http.MethodDelete {
+		if cmd.Flags().Changed("body") && method != http.MethodGet && method != http.MethodDelete {
 			raw, err := readAPICmdBody(apiBody)
 			if err != nil {
 				return err
 			}
 			if len(raw) > 0 {
-				var parsed any
-				if json.Unmarshal(raw, &parsed) != nil {
-					// not JSON; send as a JSON string literal
-					parsed = string(raw)
-				}
-				body = parsed
+				body = json.RawMessage(raw)
 			}
 		}
 
-		resp, err := client.DoRaw(context.Background(), method, path, body)
+		// DoRawNoTimeout avoids the 30 s client timeout so large or slow
+		// responses (and streaming/SSE) can pass through.
+		resp, err := client.DoRawNoTimeout(cmd.Context(), method, path, body)
 		if err != nil {
 			return err
 		}

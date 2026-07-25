@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,7 +119,7 @@ func TestSendChat_Streaming(t *testing.T) {
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "token")
-	out := captureStdout(t, func() error { return sendChat(client, 1, "hi") })
+	out := captureStdout(t, func() error { return sendChat(context.Background(), client, 1, "hi") })
 
 	if strings.Count(out, "Hello world") != 1 {
 		t.Errorf("expected 'Hello world' exactly once, got %q", out)
@@ -139,7 +140,7 @@ func TestSendChat_CompleteFallback(t *testing.T) {
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "token")
-	out := captureStdout(t, func() error { return sendChat(client, 1, "hi") })
+	out := captureStdout(t, func() error { return sendChat(context.Background(), client, 1, "hi") })
 
 	if !strings.Contains(out, "Solo answer") {
 		t.Errorf("expected fallback text 'Solo answer' in output, got %q", out)
@@ -159,7 +160,7 @@ func TestSendChat_NonStream(t *testing.T) {
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "token")
-	out := captureStdout(t, func() error { return sendChat(client, 1, "hi") })
+	out := captureStdout(t, func() error { return sendChat(context.Background(), client, 1, "hi") })
 
 	if strings.Contains(out, "ignored") {
 		t.Errorf("deltas must not print in non-stream mode, got %q", out)
@@ -183,7 +184,7 @@ func TestSendChat_IgnoresUserMessageEcho(t *testing.T) {
 	defer srv.Close()
 
 	client := api.NewClient(srv.URL, "token")
-	out := captureStdout(t, func() error { return sendChat(client, 1, "hi") })
+	out := captureStdout(t, func() error { return sendChat(context.Background(), client, 1, "hi") })
 
 	if strings.Contains(out, "echo me") {
 		t.Errorf("user echo must not be printed as the reply, got %q", out)
