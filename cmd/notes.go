@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
@@ -16,6 +18,10 @@ var (
 	patLabel      string
 	patTTL        int
 	patCompanion  int
+
+	notesWriteBody    string
+	notesWriteFile    string
+	notesWriteMessage string
 )
 
 // --- notes -----------------------------------------------------------------
@@ -292,6 +298,80 @@ var notesPatRevokeCmd = &cobra.Command{
 	},
 }
 
+var notesWriteCmd = &cobra.Command{
+	Use:   "write <path>",
+	Short: "Create or overwrite a note",
+	Long: `Write a note into the notes repo at a repo-relative path.
+
+Content comes from --body, from --file, or from stdin when neither is given.
+The path must not contain ".." or absolute components.
+
+Note: notes repos are a platform capability. Against a backend that runs
+without one configured, every notes-repo route answers 503 — the command
+reports that rather than pretending the write landed.
+
+Examples:
+  weside notes write scratch/idea.md --body "# Idea"
+  weside notes write scratch/idea.md --file ./idea.md
+  echo "# Idea" | weside notes write scratch/idea.md`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		content, err := resolveNoteContent()
+		if err != nil {
+			return err
+		}
+
+		payload := map[string]any{"path": args[0], "body": content}
+		if notesWriteMessage != "" {
+			payload["commit_message"] = notesWriteMessage
+		}
+
+		var result map[string]any
+		if err := client.Put(context.Background(), "/notes", payload, &result); err != nil {
+			return fmt.Errorf("writing note: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Wrote %v (sha %v).", result["path"], result["sha"])
+		return nil
+	},
+}
+
+// resolveNoteContent picks the note body from exactly one source: --body,
+// --file, or stdin. Two sources at once is a mistake worth failing on rather
+// than silently preferring one.
+func resolveNoteContent() (string, error) {
+	if notesWriteBody != "" && notesWriteFile != "" {
+		return "", fmt.Errorf("pass either --body or --file, not both")
+	}
+	if notesWriteBody != "" {
+		return notesWriteBody, nil
+	}
+	if notesWriteFile != "" {
+		data, err := os.ReadFile(notesWriteFile) //nolint:gosec // user-supplied path is the point
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", notesWriteFile, err)
+		}
+		return string(data), nil
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("reading stdin: %w", err)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("no content: pass --body, --file, or pipe it on stdin")
+	}
+	return string(data), nil
+}
+
 func init() {
 	notesListCmd.Flags().StringVar(&notesScope, "scope", "all", "all|mine|shared|user-private")
 	notesListCmd.Flags().StringVar(&notesAudience, "audience", "", "companion slug")
@@ -301,7 +381,12 @@ func init() {
 	notesPatMintCmd.Flags().IntVar(&patTTL, "ttl", 90, "days: 30|90|365")
 	notesPatMintCmd.Flags().IntVar(&patCompanion, "companion", 0, "companion id (optional)")
 
+	notesWriteCmd.Flags().StringVar(&notesWriteBody, "body", "", "note content (inline)")
+	notesWriteCmd.Flags().StringVar(&notesWriteFile, "file", "", "read note content from a local file")
+	notesWriteCmd.Flags().StringVar(&notesWriteMessage, "message", "", "commit message")
+
 	notesCmd.AddCommand(notesListCmd)
+	notesCmd.AddCommand(notesWriteCmd)
 	notesCmd.AddCommand(notesGetCmd)
 	notesCmd.AddCommand(notesSearchCmd)
 	notesRepoCmd.AddCommand(notesRepoStatusCmd)

@@ -243,3 +243,54 @@ func (c *Client) DoRawNoTimeout(ctx context.Context, method, path string, body a
 
 	return resp, nil
 }
+
+// PostStream sends a raw request body from an io.Reader — no JSON marshalling,
+// no multipart envelope. The file-upload endpoints stream the request body
+// straight to storage, so anything wrapped around the bytes (a multipart
+// boundary, for instance) ends up INSIDE the stored file.
+//
+// The caller owns `body`; PostStream streams it and does not close it.
+func (c *Client) PostStream(ctx context.Context, path string, body io.Reader, result any) error {
+	return c.stream(ctx, http.MethodPost, path, body, result)
+}
+
+// PutStream is PostStream for PUT.
+func (c *Client) PutStream(ctx context.Context, path string, body io.Reader, result any) error {
+	return c.stream(ctx, http.MethodPut, path, body, result)
+}
+
+func (c *Client) stream(ctx context.Context, method, path string, body io.Reader, result any) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Weside-Client", "cli")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+	}
+	if resp.StatusCode >= 400 {
+		apiErr := Error{StatusCode: resp.StatusCode, Status: resp.Status}
+		if decErr := json.NewDecoder(resp.Body).Decode(&apiErr); decErr != nil {
+			return &apiErr
+		}
+		return &apiErr
+	}
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("decoding response: %w", err)
+		}
+	}
+	return nil
+}
