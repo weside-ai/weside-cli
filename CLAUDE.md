@@ -116,7 +116,7 @@ npm view weside-cli version                     # expect the new version
 # 3. Install on dev machine (release binary → ~/go/bin/weside)
 gh release download v1.1.0 -R weside-ai/weside-cli -p "*linux_amd64*" -D /tmp/weside-release --clobber
 tar -xzf /tmp/weside-release/weside-cli_*.tar.gz -C /tmp/weside-release/
-cp /tmp/weside-release/weside-cli ~/go/bin/weside
+cp /tmp/weside-release/weside ~/go/bin/weside   # binary inside the archive is `weside`
 rm -rf /tmp/weside-release
 weside version  # verify
 ```
