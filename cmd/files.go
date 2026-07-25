@@ -137,7 +137,7 @@ Examples:
 		}
 
 		localPath := args[0]
-		handle, err := os.Open(localPath) //nolint:gosec // user-supplied path is the point
+		handle, err := os.Open(localPath)
 		if err != nil {
 			return fmt.Errorf("opening %s: %w", localPath, err)
 		}

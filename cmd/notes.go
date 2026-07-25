@@ -356,7 +356,7 @@ func resolveNoteContent() (string, error) {
 		return notesWriteBody, nil
 	}
 	if notesWriteFile != "" {
-		data, err := os.ReadFile(notesWriteFile) //nolint:gosec // user-supplied path is the point
+		data, err := os.ReadFile(notesWriteFile)
 		if err != nil {
 			return "", fmt.Errorf("reading %s: %w", notesWriteFile, err)
 		}
