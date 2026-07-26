@@ -115,7 +115,7 @@ weside chat --stream -m "Tell me a story"
 |---------|-------------|
 | `weside provider show` | Show current provider configuration |
 | `weside provider presets` | List available regional presets |
-| `weside provider set <id>` | Set provider preset (numeric ID) |
+| `weside provider set <id>` | Set a regional or WESIDE provider preset (numeric ID) |
 | `weside provider byok <provider> <key>` | Bring Your Own Key |
 
 ### Tools (MCP)
