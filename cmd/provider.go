@@ -135,7 +135,10 @@ func buildSetRequestBody(presetID int, groups []any) (map[string]any, error) {
 		presets, _ := group["presets"].([]any)
 		for _, pItem := range presets {
 			preset, _ := pItem.(map[string]any)
-			if fmt.Sprintf("%v", preset["id"]) != strconv.Itoa(presetID) {
+			// encoding/json decodes numbers into float64; comparing their
+			// %v rendering would break at seven digits ("1e+06").
+			id, ok := preset["id"].(float64)
+			if !ok || int(id) != presetID {
 				continue
 			}
 
