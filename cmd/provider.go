@@ -92,7 +92,7 @@ var providerPresetsCmd = &cobra.Command{
 
 var providerSetCmd = &cobra.Command{
 	Use:   "set <preset_id>",
-	Short: "Set regional provider preset (use numeric ID from 'presets')",
+	Short: "Set provider preset (use numeric ID from 'presets')",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		presetID, err := strconv.Atoi(args[0])
@@ -105,9 +105,16 @@ var providerSetCmd = &cobra.Command{
 			return err
 		}
 
-		// PUT /data-residency/ is a discriminated union on `type`; a weside
-		// preset requires the "weside" discriminator alongside preset_id.
-		body := map[string]any{"type": "weside", "preset_id": presetID}
+		var result map[string]any
+		if err := client.Get(context.Background(), "/data-residency/presets", &result); err != nil {
+			return fmt.Errorf("listing presets: %w", err)
+		}
+
+		groups, _ := result["groups"].([]any)
+		body, err := buildSetRequestBody(presetID, groups)
+		if err != nil {
+			return err
+		}
 		if err := client.Put(context.Background(), "/data-residency/", body, nil); err != nil {
 			return fmt.Errorf("setting provider: %w", err)
 		}
@@ -115,6 +122,38 @@ var providerSetCmd = &cobra.Command{
 		ui.PrintSuccess("Provider preset set to %d", presetID)
 		return nil
 	},
+}
+
+func buildSetRequestBody(presetID int, groups []any) (map[string]any, error) {
+	for _, gItem := range groups {
+		group, _ := gItem.(map[string]any)
+		region := fmt.Sprintf("%v", group["region"])
+		if region != "EUR" && region != "USA" && region != "WESIDE" {
+			continue
+		}
+
+		presets, _ := group["presets"].([]any)
+		for _, pItem := range presets {
+			preset, _ := pItem.(map[string]any)
+			if fmt.Sprintf("%v", preset["id"]) != strconv.Itoa(presetID) {
+				continue
+			}
+
+			if region == "WESIDE" {
+				return map[string]any{"type": "weside", "preset_id": presetID}, nil
+			}
+			return map[string]any{
+				"type":      "region",
+				"region":    region,
+				"preset_id": presetID,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"preset_id %d not found (use 'weside provider presets' to see valid IDs)",
+		presetID,
+	)
 }
 
 var providerByokCmd = &cobra.Command{
