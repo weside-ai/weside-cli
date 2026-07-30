@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
@@ -21,6 +22,9 @@ not a thread. Use these commands to debug room state and read timelines.
 Examples:
   weside rooms list
   weside rooms show 42
+  weside rooms mute 42
+  weside rooms unmute 42
+  weside rooms activity 42
   weside rooms delete 42`,
 }
 
@@ -46,7 +50,7 @@ var roomsListCmd = &cobra.Command{
 		rooms, _ := result["rooms"].([]any)
 		total := result["total"]
 
-		headers := []string{"ID", "KIND", "TITLE", "LAST MESSAGE", "UPDATED"}
+		headers := []string{"ID", "KIND", "TITLE", "MUTED", "LAST MESSAGE", "UPDATED"}
 		var rows [][]string
 		for _, item := range rooms {
 			r, _ := item.(map[string]any)
@@ -61,13 +65,61 @@ var roomsListCmd = &cobra.Command{
 				lastMsg = truncate(fmt.Sprintf("%v", lm["snippet"]), 40)
 			}
 			updated := fmt.Sprintf("%v", r["updated_at"])
-			rows = append(rows, []string{id, kind, truncate(title, 30), lastMsg, updated})
+			muted := ""
+			if r["muted"] == true {
+				muted = "yes"
+			}
+			rows = append(rows, []string{id, kind, truncate(title, 30), muted, lastMsg, updated})
 		}
 
 		ui.PrintTable(headers, rows)
 		fmt.Printf("\n%v room(s)\n", total)
 		return nil
 	},
+}
+
+func setRoomMute(ctx context.Context, client *api.Client, roomID string, muted bool) (map[string]any, error) {
+	result := map[string]any{}
+	path := "/rooms/" + roomID + "/mute"
+	var err error
+	if muted {
+		err = client.Put(ctx, path, nil, &result)
+	} else {
+		err = client.Delete(ctx, path, &result)
+	}
+	return result, err
+}
+
+func newRoomsMuteCommand(muted bool) *cobra.Command {
+	verb := "mute"
+	action := "Muting"
+	success := "muted"
+	if !muted {
+		verb = "unmute"
+		action = "Unmuting"
+		success = "unmuted"
+	}
+	return &cobra.Command{
+		Use:   verb + " <room_id>",
+		Short: action + " proactive notifications for a room",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := newAuthenticatedClientV2()
+			if err != nil {
+				return err
+			}
+			result, err := setRoomMute(cmd.Context(), client, args[0], muted)
+			if err != nil {
+				return fmt.Errorf("%s room: %w", verb, err)
+			}
+			if IsJSON() {
+				ui.PrintJSON(result)
+				return nil
+			}
+			ui.PrintSuccess("Room %s %s.", args[0], success)
+			return nil
+		},
+	}
 }
 
 var (
@@ -131,6 +183,78 @@ var roomsShowCmd = &cobra.Command{
 	},
 }
 
+var (
+	roomsActivityCursor string
+	roomsActivityLimit  int
+)
+
+var roomsActivityCmd = &cobra.Command{
+	Use:   "activity <room_id>",
+	Short: "Show what happened in a room — tools, notes, memories",
+	Long: `Read the room's durable activity feed (WA-1784).
+
+One source, one cursor: every event is a tool-audit row, so a memory save and a
+note write appear here as what they are rather than as three merged feeds. The
+feed is scoped to your own companions' activity — a foreign companion's
+arguments and output are never returned.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(roomsActivityLimit))
+		if cmd.Flags().Changed("cursor") {
+			q.Set("cursor", roomsActivityCursor)
+		}
+
+		var result map[string]any
+		path := "/rooms/" + args[0] + "/activity?" + q.Encode()
+		if err := client.Get(cmd.Context(), path, &result); err != nil {
+			return fmt.Errorf("getting room activity: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		events, _ := result["events"].([]any)
+		if len(events) == 0 {
+			fmt.Println("No activity yet.")
+			return nil
+		}
+		rows := make([][]string, 0, len(events))
+		for _, item := range events {
+			e, _ := item.(map[string]any)
+			// `outcome` is nil while an invocation has no terminal row, and
+			// "error" when it failed. The feed reads as a history, so a failed
+			// tool must not be shown as a thing that happened.
+			outcome := "…"
+			switch e["outcome"] {
+			case "success":
+				outcome = "ok"
+			case "error":
+				outcome = "failed"
+			}
+			rows = append(rows, []string{
+				fmt.Sprintf("%v", e["created_at"]),
+				fmt.Sprintf("%v", e["event_kind"]),
+				fmt.Sprintf("%v", e["tool_name"]),
+				outcome,
+				fmt.Sprintf("%v", e["companion_name"]),
+			})
+		}
+		ui.PrintTable([]string{"When", "Kind", "Tool", "Outcome", "Who"}, rows)
+		if next, _ := result["next_cursor"].(string); next != "" {
+			fmt.Printf("(older: --cursor %s)\n", next)
+		}
+		return nil
+	},
+}
+
 var roomsDeleteCmd = &cobra.Command{
 	Use:   "delete <room_id>",
 	Short: "Delete a room",
@@ -177,6 +301,11 @@ func init() {
 	roomsShowCmd.Flags().StringVar(&roomsShowAfter, "after", "", "newer-page cursor (from prev_cursor)")
 	roomsCmd.AddCommand(roomsListCmd)
 	roomsCmd.AddCommand(roomsShowCmd)
+	roomsCmd.AddCommand(newRoomsMuteCommand(true))
+	roomsCmd.AddCommand(newRoomsMuteCommand(false))
+	roomsActivityCmd.Flags().StringVar(&roomsActivityCursor, "cursor", "", "keyset cursor from a previous page")
+	roomsActivityCmd.Flags().IntVar(&roomsActivityLimit, "limit", 50, "maximum events to return")
+	roomsCmd.AddCommand(roomsActivityCmd)
 	roomsCmd.AddCommand(roomsDeleteCmd)
 	rootCmd.AddCommand(roomsCmd)
 }

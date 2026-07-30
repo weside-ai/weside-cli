@@ -40,8 +40,8 @@ func TestRoomsList(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"rooms":[`+
-			`{"id":1,"kind":"dm","title":"Nox","last_message":{"snippet":"hello"},"updated_at":"2026-07-24T10:00:00+00:00"},`+
-			`{"id":2,"kind":"group","auto_title":"Team","updated_at":"2026-07-24T11:00:00+00:00"}`+
+			`{"id":1,"kind":"dm","title":"Nox","muted":true,"last_message":{"snippet":"hello"},"updated_at":"2026-07-24T10:00:00+00:00"},`+
+			`{"id":2,"kind":"group","auto_title":"Team","muted":false,"updated_at":"2026-07-24T11:00:00+00:00"}`+
 			`],"total":2}`)
 	}))
 	defer srv.Close()
@@ -53,7 +53,7 @@ func TestRoomsList(t *testing.T) {
 			return err
 		}
 		rooms, _ := result["rooms"].([]any)
-		headers := []string{"ID", "KIND", "TITLE", "LAST MESSAGE", "UPDATED"}
+		headers := []string{"ID", "KIND", "TITLE", "MUTED", "LAST MESSAGE", "UPDATED"}
 		var rows [][]string
 		for _, item := range rooms {
 			r, _ := item.(map[string]any)
@@ -68,7 +68,11 @@ func TestRoomsList(t *testing.T) {
 				lastMsg = truncate(fmt.Sprintf("%v", lm["snippet"]), 40)
 			}
 			updated := fmt.Sprintf("%v", r["updated_at"])
-			rows = append(rows, []string{id, kind, truncate(title, 30), lastMsg, updated})
+			muted := ""
+			if r["muted"] == true {
+				muted = "yes"
+			}
+			rows = append(rows, []string{id, kind, truncate(title, 30), muted, lastMsg, updated})
 		}
 		ui.PrintTable(headers, rows)
 		fmt.Printf("\n%v room(s)\n", result["total"])
@@ -77,6 +81,49 @@ func TestRoomsList(t *testing.T) {
 
 	if !strings.Contains(out, "Nox") || !strings.Contains(out, "Team") {
 		t.Errorf("expected both room titles in table, got %q", out)
+	}
+	if !strings.Contains(out, "yes") {
+		t.Errorf("expected muted marker in table, got %q", out)
+	}
+}
+
+func TestSetRoomMuteUsesResourceMethods(t *testing.T) {
+	var methods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rooms/42/mute" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"id":42,"muted":%t}`, r.Method == http.MethodPut)
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "token")
+	muted, err := setRoomMute(context.Background(), client, "42", true)
+	if err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+	unmuted, err := setRoomMute(context.Background(), client, "42", false)
+	if err != nil {
+		t.Fatalf("unmute: %v", err)
+	}
+
+	if fmt.Sprintf("%v", muted["muted"]) != "true" || fmt.Sprintf("%v", unmuted["muted"]) != "false" {
+		t.Fatalf("unexpected responses: muted=%v unmuted=%v", muted, unmuted)
+	}
+	if fmt.Sprint(methods) != "[PUT DELETE]" {
+		t.Fatalf("expected PUT then DELETE, got %v", methods)
+	}
+}
+
+func TestRoomsMuteCommandsAreRegistered(t *testing.T) {
+	for _, name := range []string{"mute", "unmute"} {
+		cmd, _, err := roomsCmd.Find([]string{name})
+		if err != nil || cmd == nil || cmd.Name() != name {
+			t.Fatalf("rooms %s command missing: cmd=%v err=%v", name, cmd, err)
+		}
 	}
 }
 
