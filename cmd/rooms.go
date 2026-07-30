@@ -24,6 +24,7 @@ Examples:
   weside rooms show 42
   weside rooms mute 42
   weside rooms unmute 42
+  weside rooms activity 42
   weside rooms delete 42`,
 }
 
@@ -182,6 +183,67 @@ var roomsShowCmd = &cobra.Command{
 	},
 }
 
+var (
+	roomsActivityCursor string
+	roomsActivityLimit  int
+)
+
+var roomsActivityCmd = &cobra.Command{
+	Use:   "activity <room_id>",
+	Short: "Show what happened in a room — tools, notes, memories",
+	Long: `Read the room's durable activity feed (WA-1784).
+
+One source, one cursor: every event is a tool-audit row, so a memory save and a
+note write appear here as what they are rather than as three merged feeds. The
+feed is scoped to your own companions' activity — a foreign companion's
+arguments and output are never returned.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+
+		q := url.Values{}
+		q.Set("limit", strconv.Itoa(roomsActivityLimit))
+		if cmd.Flags().Changed("cursor") {
+			q.Set("cursor", roomsActivityCursor)
+		}
+
+		var result map[string]any
+		path := "/rooms/" + args[0] + "/activity?" + q.Encode()
+		if err := client.Get(cmd.Context(), path, &result); err != nil {
+			return fmt.Errorf("getting room activity: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		events, _ := result["events"].([]any)
+		if len(events) == 0 {
+			fmt.Println("No activity yet.")
+			return nil
+		}
+		rows := make([][]string, 0, len(events))
+		for _, item := range events {
+			e, _ := item.(map[string]any)
+			rows = append(rows, []string{
+				fmt.Sprintf("%v", e["created_at"]),
+				fmt.Sprintf("%v", e["event_class"]),
+				fmt.Sprintf("%v", e["tool_name"]),
+				fmt.Sprintf("%v", e["companion_name"]),
+			})
+		}
+		ui.PrintTable([]string{"When", "Kind", "Tool", "Who"}, rows)
+		if next, _ := result["next_cursor"].(string); next != "" {
+			fmt.Printf("(older: --cursor %s)\n", next)
+		}
+		return nil
+	},
+}
+
 var roomsDeleteCmd = &cobra.Command{
 	Use:   "delete <room_id>",
 	Short: "Delete a room",
@@ -230,6 +292,9 @@ func init() {
 	roomsCmd.AddCommand(roomsShowCmd)
 	roomsCmd.AddCommand(newRoomsMuteCommand(true))
 	roomsCmd.AddCommand(newRoomsMuteCommand(false))
+	roomsActivityCmd.Flags().StringVar(&roomsActivityCursor, "cursor", "", "keyset cursor from a previous page")
+	roomsActivityCmd.Flags().IntVar(&roomsActivityLimit, "limit", 50, "maximum events to return")
+	roomsCmd.AddCommand(roomsActivityCmd)
 	roomsCmd.AddCommand(roomsDeleteCmd)
 	rootCmd.AddCommand(roomsCmd)
 }
