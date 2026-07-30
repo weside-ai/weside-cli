@@ -34,9 +34,13 @@ func TestRoomActivityReadsTheFeedEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
+		// Field names copied from the generated OpenAPI schema, not from
+		// memory: the first draft of this test asserted `event_class`, which
+		// does not exist, and passed — because the fixture carried the same
+		// wrong name as the code it was checking.
 		_, _ = fmt.Fprint(w, `{"room_id":14,"events":[`+
-			`{"created_at":"2026-07-30T06:00:00+00:00","event_class":"memory",`+
-			`"tool_name":"save_memory","companion_name":"Nox"}`+
+			`{"created_at":"2026-07-30T06:00:00+00:00","event_kind":"memory",`+
+			`"outcome":"success","tool_name":"save_memory","companion_name":"Nox"}`+
 			`],"next_cursor":"abc"}`)
 	}))
 	defer srv.Close()
@@ -57,11 +61,15 @@ func TestRoomActivityReadsTheFeedEndpoint(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected one event, got %d", len(events))
 	}
-	// The event class comes from the server, not from the client re-deriving it
-	// from the tool name — that mapping has exactly one home (WA-1784).
+	// The event kind AND the outcome come from the server: the client neither
+	// re-derives the lane from the tool name (that mapping has one home,
+	// WA-1784) nor assumes an invocation succeeded.
 	first, _ := events[0].(map[string]any)
-	if first["event_class"] != "memory" {
-		t.Fatalf("event class not carried through: %v", first["event_class"])
+	if first["event_kind"] != "memory" {
+		t.Fatalf("event kind not carried through: %v", first["event_kind"])
+	}
+	if first["outcome"] != "success" {
+		t.Fatalf("outcome not carried through: %v", first["outcome"])
 	}
 }
 

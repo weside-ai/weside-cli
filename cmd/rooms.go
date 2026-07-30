@@ -229,14 +229,25 @@ arguments and output are never returned.`,
 		rows := make([][]string, 0, len(events))
 		for _, item := range events {
 			e, _ := item.(map[string]any)
+			// `outcome` is nil while an invocation has no terminal row, and
+			// "error" when it failed. The feed reads as a history, so a failed
+			// tool must not be shown as a thing that happened.
+			outcome := "…"
+			switch e["outcome"] {
+			case "success":
+				outcome = "ok"
+			case "error":
+				outcome = "failed"
+			}
 			rows = append(rows, []string{
 				fmt.Sprintf("%v", e["created_at"]),
-				fmt.Sprintf("%v", e["event_class"]),
+				fmt.Sprintf("%v", e["event_kind"]),
 				fmt.Sprintf("%v", e["tool_name"]),
+				outcome,
 				fmt.Sprintf("%v", e["companion_name"]),
 			})
 		}
-		ui.PrintTable([]string{"When", "Kind", "Tool", "Who"}, rows)
+		ui.PrintTable([]string{"When", "Kind", "Tool", "Outcome", "Who"}, rows)
 		if next, _ := result["next_cursor"].(string); next != "" {
 			fmt.Printf("(older: --cursor %s)\n", next)
 		}
