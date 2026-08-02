@@ -137,6 +137,7 @@ func TestResolve_CacheHitShortCircuitsFetch(t *testing.T) {
 	viper.Set("auth.supabase_anon_key", "cached-key")
 	viper.Set("auth.callback_port", 28520)
 	viper.Set("auth.mcp_url", "https://cached.example/mcp/")
+	viper.Set("auth.api_url", srv.URL)
 	viper.Set("auth.fetched_at", time.Now().UTC().Format(time.RFC3339))
 
 	res := auth.Resolve(context.Background(), srv.URL)
@@ -216,5 +217,53 @@ func TestFetch_Non2xx(t *testing.T) {
 
 	if _, err := auth.Fetch(context.Background(), srv.URL); err == nil {
 		t.Error("Fetch should error on non-2xx response")
+	}
+}
+
+// WA-1860: a cache written for one apiURL must never serve another — and a
+// legacy cache with no recorded api_url is a miss, not a hit.
+func TestResolve_CacheMissesOnDifferentAPIURL(t *testing.T) {
+	resetAuthState(t)
+
+	srv := httptest.NewServer(goodWellKnownHandler(t))
+	defer srv.Close()
+
+	viper.Set("auth.supabase_url", "https://cached.supabase.co")
+	viper.Set("auth.supabase_anon_key", "cached-key")
+	viper.Set("auth.callback_port", 28520)
+	viper.Set("auth.mcp_url", "https://cached.example/mcp/")
+	viper.Set("auth.api_url", "https://api.weside.ai")
+	viper.Set("auth.fetched_at", time.Now().UTC().Format(time.RFC3339))
+
+	res := auth.Resolve(context.Background(), srv.URL)
+	if res.Source != auth.SourceCache && res.Source != auth.SourceLive {
+		t.Fatalf("source = %q (err=%v)", res.Source, res.FetchError)
+	}
+	if res.Source == auth.SourceCache {
+		t.Fatal("cache written for another api_url must not be served")
+	}
+	if res.Config.SupabaseURL == "https://cached.supabase.co" {
+		t.Error("resolved config still carries the foreign cache values")
+	}
+}
+
+func TestResolve_LegacyCacheWithoutAPIURLIsMiss(t *testing.T) {
+	resetAuthState(t)
+
+	srv := httptest.NewServer(goodWellKnownHandler(t))
+	defer srv.Close()
+
+	viper.Set("auth.supabase_url", "https://cached.supabase.co")
+	viper.Set("auth.supabase_anon_key", "cached-key")
+	viper.Set("auth.callback_port", 28520)
+	viper.Set("auth.mcp_url", "https://cached.example/mcp/")
+	viper.Set("auth.fetched_at", time.Now().UTC().Format(time.RFC3339))
+
+	res := auth.Resolve(context.Background(), srv.URL)
+	if res.Source != auth.SourceLive {
+		t.Fatalf("source = %q, want %q (legacy cache must re-fetch once)", res.Source, auth.SourceLive)
+	}
+	if viper.GetString("auth.api_url") == "" {
+		t.Error("live re-fetch should upgrade the cache with api_url")
 	}
 }

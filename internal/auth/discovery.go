@@ -29,7 +29,11 @@ type Config struct {
 	// the OAuth 2.1 login flow. Optional in the well-known response (older
 	// backends omit it) — callers fall back to defaultOAuthClientID.
 	OAuthClientID string `json:"oauth_client_id,omitempty" mapstructure:"oauth_client_id,omitempty"`
-	FetchedAt     string `json:"fetched_at,omitempty" mapstructure:"fetched_at,omitempty"`
+	// APIURL records which backend the config was fetched from. The cache is
+	// only valid for the apiURL that produced it (WA-1860) — a cache written
+	// during a prod run must never serve a `--api-url staging` invocation.
+	APIURL    string `json:"api_url,omitempty"    mapstructure:"api_url,omitempty"`
+	FetchedAt string `json:"fetched_at,omitempty" mapstructure:"fetched_at,omitempty"`
 }
 
 // ResolveSource identifies which precedence level produced a Config.
@@ -86,7 +90,7 @@ func Resolve(ctx context.Context, apiURL string) ResolveResult {
 	if cfg != nil {
 		return ResolveResult{Config: cfg, Source: SourceOverride}
 	}
-	if cached, ok := loadCachedAuth(); ok {
+	if cached, ok := loadCachedAuth(apiURL); ok {
 		warnIfCacheStale(cached)
 		return ResolveResult{Config: cached, Source: SourceCache}
 	}
@@ -163,8 +167,15 @@ func Fetch(ctx context.Context, apiURL string) (*Config, error) {
 	if cfg.OAuthClientID == "" {
 		cfg.OAuthClientID = defaultOAuthClientID
 	}
+	cfg.APIURL = normalizeAPIURL(apiURL)
 	cfg.FetchedAt = time.Now().UTC().Format(time.RFC3339)
 	return &cfg, nil
+}
+
+// normalizeAPIURL canonicalizes an API base URL for cache-key comparison:
+// trims whitespace and trailing slashes. Empty stays empty.
+func normalizeAPIURL(apiURL string) string {
+	return strings.TrimRight(strings.TrimSpace(apiURL), "/")
 }
 
 // ErrPartialOverride is returned by overrideConfig (via Resolve.FetchError)
@@ -192,7 +203,15 @@ func overrideConfig() (*Config, error) {
 	}, nil
 }
 
-func loadCachedAuth() (*Config, bool) {
+// loadCachedAuth returns the cached auth-config, but only when the cache was
+// written for the same apiURL this invocation targets (WA-1860). A legacy
+// cache with no recorded api_url is treated as a miss — one live re-fetch
+// upgrades it to the keyed format.
+func loadCachedAuth(apiURL string) (*Config, bool) {
+	cachedFor := normalizeAPIURL(viper.GetString("auth.api_url"))
+	if cachedFor == "" || cachedFor != normalizeAPIURL(apiURL) {
+		return nil, false
+	}
 	url := strings.TrimSpace(viper.GetString("auth.supabase_url"))
 	key := strings.TrimSpace(viper.GetString("auth.supabase_anon_key"))
 	port := viper.GetInt("auth.callback_port")
@@ -210,6 +229,7 @@ func loadCachedAuth() (*Config, bool) {
 		CallbackPort:    port,
 		MCPURL:          mcp,
 		OAuthClientID:   clientID,
+		APIURL:          cachedFor,
 		FetchedAt:       viper.GetString("auth.fetched_at"),
 	}, true
 }
@@ -231,6 +251,7 @@ func SaveCachedAuth(cfg *Config) error {
 		"callback_port":     cfg.CallbackPort,
 		"mcp_url":           cfg.MCPURL,
 		"oauth_client_id":   cfg.OAuthClientID,
+		"api_url":           cfg.APIURL,
 		"fetched_at":        cfg.FetchedAt,
 	}
 	if err := config.PersistUpdates(map[string]any{"auth": authBlock}); err != nil {
@@ -243,6 +264,7 @@ func SaveCachedAuth(cfg *Config) error {
 	viper.Set("auth.callback_port", cfg.CallbackPort)
 	viper.Set("auth.mcp_url", cfg.MCPURL)
 	viper.Set("auth.oauth_client_id", cfg.OAuthClientID)
+	viper.Set("auth.api_url", cfg.APIURL)
 	viper.Set("auth.fetched_at", cfg.FetchedAt)
 	return nil
 }
