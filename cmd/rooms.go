@@ -186,7 +186,24 @@ var roomsShowCmd = &cobra.Command{
 var (
 	roomsActivityCursor string
 	roomsActivityLimit  int
+	roomsActivityScope  string
 )
+
+// roomActivityQuery builds the activity request's query string. Extracted so a
+// flag reaching the wire is a test rather than a claim — a --scope that never
+// arrives looks exactly like a --scope the server ignores.
+func roomActivityQuery(limit int, cursor, scope string) url.Values {
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	// "all" is the server's default; sending it would only add noise.
+	if scope != "" && scope != "all" {
+		q.Set("scope", scope)
+	}
+	return q
+}
 
 var roomsActivityCmd = &cobra.Command{
 	Use:   "activity <room_id>",
@@ -196,7 +213,11 @@ var roomsActivityCmd = &cobra.Command{
 One source, one cursor: every event is a tool-audit row, so a memory save and a
 note write appear here as what they are rather than as three merged feeds. The
 feed is scoped to your own companions' activity — a foreign companion's
-arguments and output are never returned.`,
+arguments and output are never returned.
+
+--scope last_turn narrows it to the newest turn of each of your companions,
+which is what the in-chat toolbox shows by default. That view answers with
+whole turns rather than a page, so it carries no cursor.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClientV2()
@@ -204,11 +225,11 @@ arguments and output are never returned.`,
 			return err
 		}
 
-		q := url.Values{}
-		q.Set("limit", strconv.Itoa(roomsActivityLimit))
+		cursor := ""
 		if cmd.Flags().Changed("cursor") {
-			q.Set("cursor", roomsActivityCursor)
+			cursor = roomsActivityCursor
 		}
+		q := roomActivityQuery(roomsActivityLimit, cursor, roomsActivityScope)
 
 		var result map[string]any
 		path := "/rooms/" + args[0] + "/activity?" + q.Encode()
@@ -305,6 +326,7 @@ func init() {
 	roomsCmd.AddCommand(newRoomsMuteCommand(false))
 	roomsActivityCmd.Flags().StringVar(&roomsActivityCursor, "cursor", "", "keyset cursor from a previous page")
 	roomsActivityCmd.Flags().IntVar(&roomsActivityLimit, "limit", 50, "maximum events to return")
+	roomsActivityCmd.Flags().StringVar(&roomsActivityScope, "scope", "all", "all | last_turn (newest turn per own companion)")
 	roomsCmd.AddCommand(roomsActivityCmd)
 	roomsCmd.AddCommand(roomsDeleteCmd)
 	rootCmd.AddCommand(roomsCmd)
