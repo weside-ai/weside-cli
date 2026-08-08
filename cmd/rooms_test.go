@@ -172,3 +172,28 @@ func TestRoomsShowRoleLabels(t *testing.T) {
 		t.Errorf("expected assistant reply labelled [Companion], got %q", out)
 	}
 }
+
+func TestRoomActivityQuery(t *testing.T) {
+	t.Run("scope last_turn reaches the wire", func(t *testing.T) {
+		q := roomActivityQuery(100, "", "last_turn")
+		if got := q.Get("scope"); got != "last_turn" {
+			t.Fatalf("scope = %q, want last_turn", got)
+		}
+		if got := q.Get("limit"); got != "100" {
+			t.Fatalf("limit = %q, want 100", got)
+		}
+		if _, ok := q["cursor"]; ok {
+			t.Fatal("cursor must be absent when unset")
+		}
+	})
+
+	t.Run("the default scope is not sent", func(t *testing.T) {
+		q := roomActivityQuery(50, "abc", "all")
+		if _, ok := q["scope"]; ok {
+			t.Fatal("scope=all is the server default and must not be sent")
+		}
+		if got := q.Get("cursor"); got != "abc" {
+			t.Fatalf("cursor = %q, want abc", got)
+		}
+	})
+}
