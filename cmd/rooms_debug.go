@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
@@ -569,6 +570,95 @@ var roomsInvitesCreateCmd = &cobra.Command{
 	},
 }
 
+// acceptInvite / previewInvite are extracted from their commands so a test can
+// drive the REAL path construction against an httptest server. A test that
+// posts a hand-written path only ever proves itself — and the mistake worth
+// catching here is precisely a wrong path: an accept is code-scoped
+// (/rooms/invites/<code>/accept), not room-scoped like its siblings, and a
+// wrong one returns a 404 indistinguishable from the deliberate uniform 404
+// for an invalid code.
+func acceptInvite(
+	ctx context.Context, client *api.Client, code string,
+) (map[string]any, error) {
+	var result map[string]any
+	if err := client.Post(ctx, "/rooms/invites/"+code+"/accept", nil, &result); err != nil {
+		return nil, fmt.Errorf("accepting invite: %w", err)
+	}
+	return result, nil
+}
+
+func previewInvite(
+	ctx context.Context, client *api.Client, code string,
+) (map[string]any, error) {
+	var result map[string]any
+	if err := client.Get(ctx, "/rooms/invites/"+code, &result); err != nil {
+		return nil, fmt.Errorf("previewing invite: %w", err)
+	}
+	return result, nil
+}
+
+var roomsInvitesAcceptCmd = &cobra.Command{
+	Use:   "accept <code>",
+	Short: "Redeem an invite code and join the group room",
+	Long: `Redeem an invite code as the logged-in user and join that group room.
+
+The other half of ` + "`invites create`" + `: minting could be driven from the CLI
+while redeeming could not, so verifying human-to-human rooms needed a raw API
+call for the one step that requires the SECOND identity — exactly the step worth
+having a verb for.
+
+An unknown, expired, revoked or block-gated code all answer the same 404 by
+design, so the error here cannot tell you which it was.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		result, err := acceptInvite(context.Background(), client, args[0])
+		if err != nil {
+			return err
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Joined room %v (%v).", result["id"], result["title"])
+		return nil
+	},
+}
+
+var roomsInvitesPreviewCmd = &cobra.Command{
+	Use:   "preview <code>",
+	Short: "Show what an invite code reveals before joining",
+	Long: `Read the four public fields a held code exposes: room title, who invited,
+how many humans and how many companions are in the room.
+
+Deliberately minimal — a code is not a directory entry, so this shows enough to
+decide whether to join and nothing more.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		result, err := previewInvite(context.Background(), client, args[0])
+		if err != nil {
+			return err
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess(
+			"%v — invited by %v · %v humans, %v companions",
+			result["room_title"], result["inviter_display_name"],
+			result["human_count"], result["companion_count"],
+		)
+		return nil
+	},
+}
+
 var roomsInvitesRevokeCmd = &cobra.Command{
 	Use:   "revoke <room_id> <invite_id>",
 	Short: "Revoke an active invite",
@@ -615,4 +705,6 @@ func init() {
 	roomsInvitesCmd.AddCommand(roomsInvitesListCmd)
 	roomsInvitesCmd.AddCommand(roomsInvitesCreateCmd)
 	roomsInvitesCmd.AddCommand(roomsInvitesRevokeCmd)
+	roomsInvitesCmd.AddCommand(roomsInvitesAcceptCmd)
+	roomsInvitesCmd.AddCommand(roomsInvitesPreviewCmd)
 }
