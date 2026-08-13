@@ -197,3 +197,50 @@ func TestRoomActivityQuery(t *testing.T) {
 		}
 	})
 }
+
+// Drives the REAL helpers the commands call, so the assertion is about the
+// production path construction and not about a path the test typed itself. The
+// mistake worth catching is exactly that: an accept is code-scoped
+// (/rooms/invites/<code>/accept), not room-scoped like its siblings, and a
+// wrong path returns a 404 indistinguishable from the deliberate uniform 404
+// for an invalid code — so it would survive a manual round unnoticed.
+func TestInviteAcceptAndPreviewUseTheCodeScopedPaths(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":7,"title":"Verein","room_title":"Verein",`+
+			`"inviter_display_name":"Foxy","human_count":2,"companion_count":1}`)
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "token")
+	accepted, err := acceptInvite(context.Background(), client, "abc123")
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	preview, err := previewInvite(context.Background(), client, "abc123")
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+
+	want := "[POST /rooms/invites/abc123/accept GET /rooms/invites/abc123]"
+	if fmt.Sprint(seen) != want {
+		t.Fatalf("wrong invite paths: got %v want %v", seen, want)
+	}
+	if fmt.Sprintf("%v", accepted["id"]) != "7" {
+		t.Fatalf("accept did not return the joined room: %v", accepted)
+	}
+	if fmt.Sprintf("%v", preview["human_count"]) != "2" {
+		t.Fatalf("preview did not return the four public fields: %v", preview)
+	}
+}
+
+func TestRoomsInviteVerbsAreRegistered(t *testing.T) {
+	for _, name := range []string{"create", "list", "revoke", "accept", "preview"} {
+		cmd, _, err := roomsInvitesCmd.Find([]string{name})
+		if err != nil || cmd == nil || cmd.Name() != name {
+			t.Fatalf("rooms invites %s missing: cmd=%v err=%v", name, cmd, err)
+		}
+	}
+}
