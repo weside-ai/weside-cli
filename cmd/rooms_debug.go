@@ -257,8 +257,28 @@ var roomsUndoCmd = &cobra.Command{
 			return err
 		}
 
+		// The endpoint requires the caller to NAME the turn it means: it undoes
+		// the room's newest turn and refuses with 409 when that turn does not
+		// contain the id. So read the newest message first and hand its id
+		// back. A turn landing between the read and the undo turns into that
+		// 409 instead of silently rolling back a different turn.
+		var timeline map[string]any
+		if err := client.Get(context.Background(), "/rooms/"+args[0]+"/messages?limit=1", &timeline); err != nil {
+			return fmt.Errorf("reading room timeline: %w", err)
+		}
+		messages := asSlice(timeline["messages"])
+		if len(messages) == 0 {
+			return fmt.Errorf("room %s has no messages to undo", args[0])
+		}
+		newest, _ := messages[len(messages)-1].(map[string]any)
+		expectedID, _ := newest["id"].(string)
+		if expectedID == "" {
+			return fmt.Errorf("room %s: newest message carries no id", args[0])
+		}
+
 		var result map[string]any
-		if err := client.Post(context.Background(), "/rooms/"+args[0]+"/undo", nil, &result); err != nil {
+		body := map[string]any{"expected_message_id": expectedID}
+		if err := client.Post(context.Background(), "/rooms/"+args[0]+"/undo", body, &result); err != nil {
 			return fmt.Errorf("undoing turn: %w", err)
 		}
 
