@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -103,8 +105,8 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		return nil, fmt.Errorf("MCP server error %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var rpcResp JSONRPCResponse
-	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+	rpcResp, err := parseResponse(resp.Header.Get("Content-Type"), respBody)
+	if err != nil {
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
@@ -113,6 +115,70 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	}
 
 	return rpcResp.Result, nil
+}
+
+func parseResponse(contentType string, body []byte) (JSONRPCResponse, error) {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return JSONRPCResponse{}, fmt.Errorf("Content-Type %q: %w", contentType, err)
+	}
+
+	var rpcResp JSONRPCResponse
+	switch mediaType {
+	case "application/json":
+		err = json.Unmarshal(body, &rpcResp)
+	case "text/event-stream":
+		rpcResp, err = parseSSEResponse(body)
+	default:
+		err = fmt.Errorf("unsupported Content-Type %q", contentType)
+	}
+
+	return rpcResp, err
+}
+
+func parseSSEResponse(body []byte) (JSONRPCResponse, error) {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+
+	var dataLines []string
+	for _, line := range strings.Split(normalized, "\n") {
+		if line == "" {
+			if rpcResp, ok := parseSSEData(dataLines); ok {
+				return rpcResp, nil
+			}
+			dataLines = nil
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		field, value, found := strings.Cut(line, ":")
+		if !found {
+			value = ""
+		}
+		value = strings.TrimPrefix(value, " ")
+		if field == "data" {
+			dataLines = append(dataLines, value)
+		}
+	}
+
+	if rpcResp, ok := parseSSEData(dataLines); ok {
+		return rpcResp, nil
+	}
+	return JSONRPCResponse{}, fmt.Errorf("no JSON-RPC response event found")
+}
+
+func parseSSEData(dataLines []string) (JSONRPCResponse, bool) {
+	if len(dataLines) == 0 {
+		return JSONRPCResponse{}, false
+	}
+
+	var rpcResp JSONRPCResponse
+	if err := json.Unmarshal([]byte(strings.Join(dataLines, "\n")), &rpcResp); err != nil {
+		return JSONRPCResponse{}, false
+	}
+	return rpcResp, rpcResp.JSONRPC == "2.0"
 }
 
 // ListTools calls tools/list on the MCP server.
