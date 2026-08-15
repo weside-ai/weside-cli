@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/weside-ai/weside-cli/internal/mcp"
@@ -56,6 +57,70 @@ func TestClientCall(t *testing.T) {
 
 	if _, ok := parsed["tools"]; !ok {
 		t.Error("result missing 'tools' key")
+	}
+}
+
+func TestClientCallSSE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = w.Write([]byte(": keepalive\nevent: message\nid: 7\nretry: 1000\ndata: {\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}\n\n"))
+	}))
+	defer server.Close()
+
+	client := mcp.NewClient(server.URL, "token")
+	result, err := client.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("ListTools() error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+	if _, ok := parsed["tools"]; !ok {
+		t.Error("result missing 'tools' key")
+	}
+}
+
+func TestClientCallSSEMultilineData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"result\":{\ndata: \"content\":\"joined\"},\"id\":1}\n\n"))
+	}))
+	defer server.Close()
+
+	client := mcp.NewClient(server.URL, "token")
+	result, err := client.Call(context.Background(), "tools/call", nil)
+	if err != nil {
+		t.Fatalf("Call() error: %v", err)
+	}
+	if got, want := string(result), "{\n\"content\":\"joined\"}"; got != want {
+		t.Fatalf("result = %q, want newline-joined %q", got, want)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("parsing result: %v", err)
+	}
+	if parsed["content"] != "joined" {
+		t.Errorf("content = %v, want %q", parsed["content"], "joined")
+	}
+}
+
+func TestClientCallUnknownContentType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("not JSON"))
+	}))
+	defer server.Close()
+
+	client := mcp.NewClient(server.URL, "token")
+	_, err := client.Call(context.Background(), "tools/list", nil)
+	if err == nil {
+		t.Fatal("Call() error = nil, want unsupported Content-Type error")
+	}
+	if !strings.Contains(err.Error(), "text/plain") {
+		t.Fatalf("Call() error = %q, want it to name %q", err, "text/plain")
 	}
 }
 
