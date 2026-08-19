@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
@@ -365,6 +366,34 @@ var expertsBefriendCmd = &cobra.Command{
 
 var safetyCmd = &cobra.Command{Use: "safety", Short: "Trust & safety actions"}
 
+type blockedUser struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+type safetyReportRequest struct {
+	TargetType   string `json:"target_type"`
+	TargetUserID string `json:"target_user_id"`
+	ReasonCode   string `json:"reason_code"`
+	// The API historically calls the reporter's own words "reason"; the
+	// category is the separate reason_code field exposed as --reason-code.
+	Reason string `json:"reason"`
+}
+
+var (
+	safetyReportUser       string
+	safetyReportReasonCode string
+	safetyReportText       string
+)
+
+var allowedSafetyReportReasonCodes = []string{
+	"harassment",
+	"unwanted_sexual",
+	"impersonation",
+	"spam_scam",
+	"other",
+}
+
 var safetyBlockCmd = &cobra.Command{
 	Use:   "block <user_id>",
 	Short: "Block another user (bidirectional, idempotent)",
@@ -399,6 +428,83 @@ var safetyUnblockCmd = &cobra.Command{
 	},
 }
 
+var safetyBlockedCmd = &cobra.Command{
+	Use:   "blocked",
+	Short: "List blocked people",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		var result []blockedUser
+		if err := client.Get(context.Background(), "/users/blocked", &result); err != nil {
+			return fmt.Errorf("listing blocked users: %w", err)
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		rows := make([][]string, 0, len(result))
+		for _, user := range result {
+			rows = append(rows, []string{user.ID, user.DisplayName})
+		}
+		ui.PrintTable([]string{"ID", "DISPLAY NAME"}, rows)
+		return nil
+	},
+}
+
+var safetyReportCmd = &cobra.Command{
+	Use:   "report --user <id> --reason-code <key> [--text <sentence>]",
+	Short: "Report another user",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := validateSafetyReport(safetyReportUser, safetyReportReasonCode, safetyReportText); err != nil {
+			return err
+		}
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+		body := safetyReportRequest{
+			TargetType:   "user",
+			TargetUserID: safetyReportUser,
+			ReasonCode:   safetyReportReasonCode,
+			Reason:       safetyReportText,
+		}
+		var result map[string]any
+		if err := client.Post(context.Background(), "/reports", body, &result); err != nil {
+			return fmt.Errorf("reporting user: %w", err)
+		}
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("User %s reported.", safetyReportUser)
+		return nil
+	},
+}
+
+func validateSafetyReport(userID, reasonCode, text string) error {
+	if userID == "" {
+		return fmt.Errorf("--user is required")
+	}
+	allowed := false
+	for _, candidate := range allowedSafetyReportReasonCodes {
+		if reasonCode == candidate {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("--reason-code must be one of: %s", strings.Join(allowedSafetyReportReasonCodes, ", "))
+	}
+	if reasonCode == "other" && strings.TrimSpace(text) == "" {
+		return fmt.Errorf("--text is required when --reason-code is other")
+	}
+	return nil
+}
+
 func init() {
 	circlesCreateCmd.Flags().StringVar(&circleVisibility, "visibility", "", "circle visibility")
 
@@ -431,5 +537,11 @@ func init() {
 
 	safetyCmd.AddCommand(safetyBlockCmd)
 	safetyCmd.AddCommand(safetyUnblockCmd)
+	safetyCmd.AddCommand(safetyBlockedCmd)
+	safetyCmd.AddCommand(safetyReportCmd)
 	rootCmd.AddCommand(safetyCmd)
+
+	safetyReportCmd.Flags().StringVar(&safetyReportUser, "user", "", "user ID to report")
+	safetyReportCmd.Flags().StringVar(&safetyReportReasonCode, "reason-code", "", "report category")
+	safetyReportCmd.Flags().StringVar(&safetyReportText, "text", "", "reporter's own description")
 }
