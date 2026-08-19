@@ -2,7 +2,7 @@ module github.com/weside-ai/weside-cli
 
 go 1.25.12
 
-toolchain go1.26.6
+toolchain go1.26.7
 
 require (
 	charm.land/glamour/v2 v2.0.1
