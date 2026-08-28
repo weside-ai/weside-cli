@@ -28,7 +28,16 @@ type Confirmation struct {
 	Remaining string `json:"remaining"`
 	Tool      string `json:"tool"`
 	Status    string `json:"status"`
-	MessageID string `json:"message_id"`
+	// The v2 timeline names a message's server id `id`; the field is omitted
+	// rather than printed as "<nil>" when a payload has none.
+	MessageID string `json:"message_id,omitempty"`
+}
+
+// stringField reads one string member, answering "" when it is absent or of
+// another type — never the "<nil>" a %v of a missing key produces.
+func stringField(msg map[string]any, key string) string {
+	value, _ := msg[key].(string)
+	return value
 }
 
 // parseConfirmationSentinels reads every ask out of a room timeline payload,
@@ -55,7 +64,7 @@ func parseConfirmationSentinels(result map[string]any) []Confirmation {
 				Weight:    weight,
 				Remaining: m[3],
 				Tool:      m[4],
-				MessageID: fmt.Sprintf("%v", msg["message_id"]),
+				MessageID: stringField(msg, "id"),
 			})
 		}
 	}
