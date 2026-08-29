@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
+	"os/signal"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/api"
@@ -183,6 +189,152 @@ var roomsShowCmd = &cobra.Command{
 	},
 }
 
+var roomsFollowSince string
+
+// followFrame is one line of `rooms follow`'s NDJSON output.
+type followFrame struct {
+	Event string `json:"event"`
+	ID    string `json:"id,omitempty"`
+	Data  any    `json:"data"`
+}
+
+// followStreamSummary is what followEvents reports once the stream ends.
+type followStreamSummary struct {
+	Frames     int
+	Heartbeats int
+}
+
+// roomsFollowCmd is a live follow of a room's SSE stream, printed as NDJSON —
+// a verification instrument: it exists so two devices' subscriptions to the
+// same room can be diffed frame by frame. Deliberately no retry ladder: a
+// break in the stream is shown, not papered over.
+var roomsFollowCmd = &cobra.Command{
+	Use:   "follow <room_id>",
+	Short: "Follow a room's live SSE stream as NDJSON",
+	Long: `Live-follow a room's event stream, printing one JSON object per line
+as each frame arrives:
+
+  {"event":"connected","id":"<cursor>","data":{...}}
+  {"event":"room_message_delta","id":"<cursor>","data":{...}}
+
+Output is always NDJSON on stdout, flushed immediately per frame, so a
+script (or a second "weside rooms follow" on another device) can diff what
+two subscriptions of the same room actually received. --json is accepted
+for consistency with the other verbs but does not change the format.
+
+Heartbeat comments are not printed as frames but are counted; a one-line
+summary (frames, heartbeats) is written to stderr on exit. Runs until the
+server closes the stream or you interrupt with Ctrl-C (clean exit, 0). If
+the stream breaks, the reason goes to stderr and the command exits non-zero
+— there is no automatic retry.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+		defer stop()
+
+		path := "/rooms/" + args[0] + "/events"
+		if roomsFollowSince != "" {
+			// Cursors are opaque tokens — encode so any character survives.
+			path += "?since=" + url.QueryEscape(roomsFollowSince)
+		}
+		resp, err := client.Subscribe(ctx, path)
+		if err != nil {
+			return fmt.Errorf("opening event stream: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		summary, err := followEvents(ctx, resp.Body, os.Stdout)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "follow: %s (frames=%d heartbeats=%d)\n", err, summary.Frames, summary.Heartbeats)
+			return err
+		case ctx.Err() != nil:
+			fmt.Fprintf(os.Stderr, "follow: interrupted (frames=%d heartbeats=%d)\n", summary.Frames, summary.Heartbeats)
+			return nil
+		default:
+			fmt.Fprintf(os.Stderr, "follow: stream closed by server (frames=%d heartbeats=%d)\n", summary.Frames, summary.Heartbeats)
+			return nil
+		}
+	},
+}
+
+// followEvents reads SSE frames from r, writing one NDJSON line per frame to
+// out (flushed immediately) and counting — but not printing — heartbeat
+// comment lines. It returns once r is exhausted (server closed the stream)
+// or ctx is cancelled (SIGINT: reported via the returned summary, not as an
+// error). A malformed data payload or a genuine read error comes back as
+// err — deliberately no retry, so a caller sees a break as a break.
+func followEvents(ctx context.Context, r io.Reader, out io.Writer) (followStreamSummary, error) {
+	var summary followStreamSummary
+	w := bufio.NewWriter(out)
+	enc := json.NewEncoder(w)
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var (
+		curID, eventType string
+		dataLines        []string
+	)
+	flush := func() error {
+		if eventType == "" && curID == "" && len(dataLines) == 0 {
+			return nil
+		}
+		frame := followFrame{Event: eventType, ID: curID}
+		if len(dataLines) > 0 {
+			raw := strings.Join(dataLines, "\n")
+			if err := json.Unmarshal([]byte(raw), &frame.Data); err != nil {
+				return fmt.Errorf("parsing data for event %q: %w", eventType, err)
+			}
+		}
+		if err := enc.Encode(&frame); err != nil {
+			return err
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		summary.Frames++
+		curID, eventType = "", ""
+		dataLines = nil
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			if err := flush(); err != nil {
+				return summary, err
+			}
+		case strings.HasPrefix(line, ":"):
+			// SSE comment (":heartbeat" every 15s) — counted, not a frame.
+			summary.Heartbeats++
+		case strings.HasPrefix(line, "id: "):
+			curID = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "event: "):
+			eventType = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if err := flush(); err != nil {
+		return summary, err
+	}
+
+	if err := scanner.Err(); err != nil {
+		if ctx.Err() != nil {
+			return summary, nil
+		}
+		return summary, fmt.Errorf("reading event stream: %w", err)
+	}
+	return summary, nil
+}
+
 var (
 	roomsActivityCursor string
 	roomsActivityLimit  int
@@ -320,8 +472,10 @@ func init() {
 	roomsShowCmd.Flags().IntVar(&roomsShowLimit, "limit", 50, "max messages (1-100)")
 	roomsShowCmd.Flags().StringVar(&roomsShowCursor, "cursor", "", "older-page cursor (from next_cursor)")
 	roomsShowCmd.Flags().StringVar(&roomsShowAfter, "after", "", "newer-page cursor (from prev_cursor)")
+	roomsFollowCmd.Flags().StringVar(&roomsFollowSince, "since", "", "resume from an SSE cursor")
 	roomsCmd.AddCommand(roomsListCmd)
 	roomsCmd.AddCommand(roomsShowCmd)
+	roomsCmd.AddCommand(roomsFollowCmd)
 	roomsCmd.AddCommand(newRoomsMuteCommand(true))
 	roomsCmd.AddCommand(newRoomsMuteCommand(false))
 	roomsActivityCmd.Flags().StringVar(&roomsActivityCursor, "cursor", "", "keyset cursor from a previous page")
