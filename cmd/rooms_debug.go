@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 
@@ -31,6 +34,7 @@ var (
 	roomsGroupTitle        string
 	eventsSince            string
 	eventsRaw              bool
+	eventsNDJSON           bool
 )
 
 var roomsTraceCmd = &cobra.Command{
@@ -434,81 +438,64 @@ func asSlice(v any) []any {
 	return s
 }
 
+// ndjsonFrame is one line of `rooms events --ndjson`'s output — a verification
+// instrument's shape: `event`/`id` alongside `data` parsed as an object (not
+// a re-encoded string) so a script (or a second concurrent `rooms events
+// --ndjson` on another device) can diff frames without a second parse pass.
+type ndjsonFrame struct {
+	Event string `json:"event"`
+	ID    string `json:"id,omitempty"`
+	Data  any    `json:"data"`
+}
+
 // roomsEventsCmd — raw SSE mitschnitt of a room's event stream. Prints every
 // frame (known and unknown types) for debugging; unlike `chat` it does not
-// interpret or wait for a turn to end.
+// interpret or wait for a turn to end. Three output forms share one SSE
+// frame parse: the default pretty form, `--raw` (`<type> <cursor> <json>`),
+// and `--ndjson` (one JSON object per line, for `jq`/diffing two devices'
+// subscriptions to the same room) — mutually exclusive with `--raw`.
 var roomsEventsCmd = &cobra.Command{
 	Use:   "events <room_id>",
 	Short: "Stream raw room SSE events (debug)",
-	Args:  cobra.ExactArgs(1),
+	Long: `Stream a room's SSE events for debugging or verification.
+
+Default form prints each frame as id:/event:/data: lines, like the wire
+format. --raw prints one line per frame as "<type> <cursor> <json>".
+--ndjson prints one JSON object per line — {"event":...,"id":...,"data":{...}}
+with "data" parsed as an object, "id" omitted when absent — for a script (or
+a second "weside rooms events --ndjson" on another device) to consume or diff.
+--raw and --ndjson are mutually exclusive.
+
+Under --ndjson, heartbeat comments are counted rather than printed to
+stdout, and a one-line summary (frames, heartbeats, close reason) goes to
+stderr on exit, keeping stdout pure NDJSON. All forms exit cleanly (0) on
+Ctrl-C. There is no retry: a broken stream is reported, not papered over.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if eventsRaw && eventsNDJSON {
+			return fmt.Errorf("--raw and --ndjson are mutually exclusive")
+		}
+
 		client, err := newAuthenticatedClientV2()
 		if err != nil {
 			return err
 		}
+
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+		defer stop()
+
 		path := "/rooms/" + args[0] + "/events"
 		if eventsSince != "" {
 			// Cursors are opaque tokens — encode so any character survives.
 			path += "?since=" + url.QueryEscape(eventsSince)
 		}
-		resp, err := client.Subscribe(cmd.Context(), path)
+		resp, err := client.Subscribe(ctx, path)
 		if err != nil {
 			return fmt.Errorf("opening event stream: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-		var (
-			curID, eventType string
-			dataLines        []string
-			flush            = func() {
-				if eventType == "" && curID == "" && len(dataLines) == 0 {
-					return
-				}
-				data := strings.Join(dataLines, "\n")
-				if eventsRaw {
-					fmt.Printf("%s %s %s\n", orDash(eventType), orDash(curID), data)
-				} else {
-					if curID != "" {
-						fmt.Printf("id: %s\n", curID)
-					}
-					if eventType != "" {
-						fmt.Printf("event: %s\n", eventType)
-					}
-					if data != "" {
-						fmt.Printf("data: %s\n", prettyData(data))
-					}
-					fmt.Println()
-				}
-				curID, eventType = "", ""
-				dataLines = nil
-			}
-		)
-		for scanner.Scan() {
-			line := scanner.Text()
-			switch {
-			case line == "":
-				flush()
-			case strings.HasPrefix(line, ":"):
-				// SSE comment (e.g. ":heartbeat") — surface it.
-				if !eventsRaw {
-					fmt.Printf("%s\n", line)
-				}
-			case strings.HasPrefix(line, "id: "):
-				curID = strings.TrimPrefix(line, "id: ")
-			case strings.HasPrefix(line, "event: "):
-				eventType = strings.TrimPrefix(line, "event: ")
-			case strings.HasPrefix(line, "data: "):
-				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
-			}
-		}
-		flush()
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("reading event stream: %w", err)
-		}
-		return nil
+		return streamRoomEvents(ctx, resp.Body, os.Stdout, os.Stderr, eventsRaw, eventsNDJSON)
 	},
 }
 
@@ -527,6 +514,132 @@ func prettyData(data string) string {
 		return "\n  " + pretty.String()
 	}
 	return data
+}
+
+// streamRoomEvents reads SSE frames from r and writes them to out in one of
+// three forms (default id:/event:/data: lines, raw "<type> <cursor> <json>",
+// or one-JSON-object-per-line ndjson), returning once r is exhausted (server
+// closed the stream) or ctx is cancelled (SIGINT — reported, not returned as
+// an error). Under ndjson, heartbeat comments are counted rather than
+// written to out, and a one-line summary (frames, heartbeats, close reason)
+// goes to stderr — the default/raw forms keep their prior stdout contract
+// unchanged and stay silent on stderr. A malformed ndjson data payload, or a
+// genuine (non-cancellation) read error, comes back as err — deliberately no
+// retry, so a caller sees a break as a break.
+func streamRoomEvents(ctx context.Context, r io.Reader, out, stderr io.Writer, raw, ndjson bool) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var ndjsonOut *bufio.Writer
+	var ndjsonEnc *json.Encoder
+	if ndjson {
+		ndjsonOut = bufio.NewWriter(out)
+		ndjsonEnc = json.NewEncoder(ndjsonOut)
+	}
+
+	var (
+		curID, eventType   string
+		dataLines          []string
+		frames, heartbeats int
+	)
+	flush := func() error {
+		if eventType == "" && curID == "" && len(dataLines) == 0 {
+			return nil
+		}
+		data := strings.Join(dataLines, "\n")
+		switch {
+		case ndjson:
+			frame := ndjsonFrame{Event: eventType, ID: curID}
+			if data != "" {
+				if err := json.Unmarshal([]byte(data), &frame.Data); err != nil {
+					return fmt.Errorf("parsing data for event %q: %w", eventType, err)
+				}
+			}
+			if err := ndjsonEnc.Encode(&frame); err != nil {
+				return err
+			}
+			if err := ndjsonOut.Flush(); err != nil {
+				return err
+			}
+		case raw:
+			fmt.Fprintf(out, "%s %s %s\n", orDash(eventType), orDash(curID), data)
+		default:
+			if curID != "" {
+				fmt.Fprintf(out, "id: %s\n", curID)
+			}
+			if eventType != "" {
+				fmt.Fprintf(out, "event: %s\n", eventType)
+			}
+			if data != "" {
+				fmt.Fprintf(out, "data: %s\n", prettyData(data))
+			}
+			fmt.Fprintln(out)
+		}
+		frames++
+		curID, eventType = "", ""
+		dataLines = nil
+		return nil
+	}
+
+	var flushErr error
+scanLoop:
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "":
+			if err := flush(); err != nil {
+				flushErr = err
+				break scanLoop
+			}
+		case strings.HasPrefix(line, ":"):
+			// SSE comment (e.g. ":heartbeat"). NDJSON counts it and keeps
+			// stdout pure; the other forms surface it as before.
+			if ndjson {
+				heartbeats++
+			} else {
+				fmt.Fprintf(out, "%s\n", line)
+			}
+		case strings.HasPrefix(line, "id: "):
+			curID = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "event: "):
+			eventType = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if flushErr == nil {
+		flushErr = flush()
+	}
+	readErr := scanner.Err()
+
+	if !ndjson {
+		if flushErr != nil {
+			return flushErr
+		}
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("reading event stream: %w", readErr)
+		}
+		return nil
+	}
+
+	switch {
+	case flushErr != nil:
+		fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", flushErr, frames, heartbeats)
+		return flushErr
+	case readErr != nil && ctx.Err() != nil:
+		fmt.Fprintf(stderr, "events: interrupted (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		return nil
+	case readErr != nil:
+		wrapped := fmt.Errorf("reading event stream: %w", readErr)
+		fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", wrapped, frames, heartbeats)
+		return wrapped
+	default:
+		fmt.Fprintf(stderr, "events: stream closed by server (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		return nil
+	}
 }
 
 // rooms invites subgroup — list/create/revoke room invites.
@@ -710,6 +823,7 @@ func init() {
 	_ = roomsGroupCmd.MarkFlagRequired("companions")
 	roomsEventsCmd.Flags().StringVar(&eventsSince, "since", "", "resume from an SSE cursor")
 	roomsEventsCmd.Flags().BoolVar(&eventsRaw, "raw", false, "one line per frame: <type> <cursor> <json>")
+	roomsEventsCmd.Flags().BoolVar(&eventsNDJSON, "ndjson", false, "one JSON object per frame: {\"event\":...,\"id\":...,\"data\":{...}} (mutually exclusive with --raw)")
 
 	roomsCmd.AddCommand(roomsTraceCmd)
 	roomsCmd.AddCommand(roomsParticipantsCmd)
