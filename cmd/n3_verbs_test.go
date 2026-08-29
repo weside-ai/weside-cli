@@ -2,11 +2,15 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/api"
 )
 
@@ -134,5 +138,77 @@ func TestStageDeleteUsesTheArtifactResource(t *testing.T) {
 
 	if gotMethod != http.MethodDelete || gotPath != "/stage/artifacts/abc123" {
 		t.Fatalf("wrong request: %s %s", gotMethod, gotPath)
+	}
+}
+
+// TestNotesDeleteBuildsTheRightRequest pins the request shape the durability
+// check in AC1 relies on: a DELETE against /notes with path and recursive as
+// query params, never a body — the Contents API delete carries no payload
+// (Design Decision 2).
+func TestNotesDeleteBuildsTheRightRequest(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"path":"inbox/shot.png","deleted":true,"count":1,"commit_sha":"abc123def"}`)
+	}))
+	defer srv.Close()
+
+	t.Setenv("WESIDE_TOKEN", "token")
+	viper.Set("api_url", srv.URL)
+	t.Cleanup(func() { viper.Set("api_url", "") })
+
+	notesDeleteRecursive = true
+	t.Cleanup(func() { notesDeleteRecursive = false })
+
+	if err := notesDeleteCmd.RunE(notesDeleteCmd, []string{"inbox/shot.png"}); err != nil {
+		t.Fatalf("notes delete: %v", err)
+	}
+
+	if gotMethod != http.MethodDelete || gotPath != "/api/v1/notes" {
+		t.Fatalf("wrong request: %s %s", gotMethod, gotPath)
+	}
+	q, err := url.ParseQuery(gotQuery)
+	if err != nil {
+		t.Fatalf("parsing query: %v", err)
+	}
+	if q.Get("path") != "inbox/shot.png" {
+		t.Fatalf("path param = %q", q.Get("path"))
+	}
+	if q.Get("recursive") != "true" {
+		t.Fatalf("recursive param = %q, want true", q.Get("recursive"))
+	}
+}
+
+// TestNotesDeleteJSONCarriesCommitSHA pins AC10: --json must surface
+// commit_sha, the field the story's verification reads to prove the delete
+// survived as a commit rather than a bare API call.
+func TestNotesDeleteJSONCarriesCommitSHA(t *testing.T) {
+	// The request shape is pinned by TestNotesDeleteBuildsTheRightRequest; this
+	// handler only needs to answer, so it ignores the request.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"path":"inbox/shot.png","deleted":true,"count":1,"commit_sha":"deadbeef01"}`)
+	}))
+	defer srv.Close()
+
+	t.Setenv("WESIDE_TOKEN", "token")
+	viper.Set("api_url", srv.URL)
+	viper.Set("json", true)
+	t.Cleanup(func() {
+		viper.Set("api_url", "")
+		viper.Set("json", false)
+	})
+
+	out := captureStdout(t, func() error {
+		return notesDeleteCmd.RunE(notesDeleteCmd, []string{"inbox/shot.png"})
+	})
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("output is not JSON: %v\noutput: %s", err, out)
+	}
+	if result["commit_sha"] != "deadbeef01" {
+		t.Fatalf("commit_sha missing or wrong in --json output: %v", result)
 	}
 }

@@ -22,6 +22,8 @@ var (
 	notesWriteBody    string
 	notesWriteFile    string
 	notesWriteMessage string
+
+	notesDeleteRecursive bool
 )
 
 // --- notes -----------------------------------------------------------------
@@ -345,6 +347,46 @@ Examples:
 	},
 }
 
+var notesDeleteCmd = &cobra.Command{
+	Use:   "delete <path>",
+	Short: "Delete a file or folder from the notes repo",
+	Long: `Delete a blob (or, with --recursive, a folder) from the notes repo at a
+repo-relative path. Every delete that lands is a Gitea commit on the vault's
+main branch — the returned commit_sha is what survives the sandbox sidecar's
+"git reset --hard origin/main" on the next pod start. The delete is
+idempotent: an already-gone path answers 200 with count 0 and a null
+commit_sha rather than an error.
+
+Examples:
+  weside notes delete inbox/shot.png
+  weside notes delete inbox/ --recursive --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		q := url.Values{}
+		q.Set("path", args[0])
+		if notesDeleteRecursive {
+			q.Set("recursive", "true")
+		}
+
+		var result map[string]any
+		if err := client.Delete(context.Background(), "/notes?"+q.Encode(), &result); err != nil {
+			return fmt.Errorf("deleting note: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Deleted %v (count %v, commit %v).", result["path"], result["count"], result["commit_sha"])
+		return nil
+	},
+}
+
 // resolveNoteContent picks the note body from exactly one source: --body,
 // --file, or stdin. Two sources at once is a mistake worth failing on rather
 // than silently preferring one.
@@ -385,10 +427,13 @@ func init() {
 	notesWriteCmd.Flags().StringVar(&notesWriteFile, "file", "", "read note content from a local file")
 	notesWriteCmd.Flags().StringVar(&notesWriteMessage, "message", "", "commit message")
 
+	notesDeleteCmd.Flags().BoolVar(&notesDeleteRecursive, "recursive", false, "delete a folder and everything under it")
+
 	notesCmd.AddCommand(notesListCmd)
 	notesCmd.AddCommand(notesWriteCmd)
 	notesCmd.AddCommand(notesGetCmd)
 	notesCmd.AddCommand(notesSearchCmd)
+	notesCmd.AddCommand(notesDeleteCmd)
 	notesRepoCmd.AddCommand(notesRepoStatusCmd)
 	notesRepoCmd.AddCommand(notesRepoRepairCmd)
 	notesPatCmd.AddCommand(notesPatListCmd)
