@@ -292,6 +292,12 @@ func (erroringReader) Read([]byte) (int, error) {
 	return 0, fmt.Errorf("connection reset")
 }
 
+type erroringWriter struct{}
+
+func (erroringWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("broken pipe")
+}
+
 func TestStreamRoomEventsNDJSONCancelledContextIsNotAnError(t *testing.T) {
 	// A cancelled context turns a read error into a clean stop (SIGINT path),
 	// reported on stderr but not returned as an error.
@@ -331,6 +337,21 @@ func TestStreamRoomEventsDefaultAndRawUnchanged(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("raw form must stay silent on stderr, got %q", stderr.String())
+	}
+}
+
+func TestStreamRoomEventsWriteErrorIsReturned(t *testing.T) {
+	// A failed write to out comes back as err ("a break as a break"), for
+	// frame writes and SSE comment lines alike.
+	var stderr bytes.Buffer
+	err := streamRoomEvents(context.Background(), strings.NewReader(sseFixtureBody), erroringWriter{}, &stderr, false, false)
+	if err == nil {
+		t.Fatal("expected the frame write error to be returned")
+	}
+
+	err = streamRoomEvents(context.Background(), strings.NewReader(": heartbeat\n\n"), erroringWriter{}, &stderr, false, false)
+	if err == nil {
+		t.Fatal("expected the comment-line write error to be returned")
 	}
 }
 

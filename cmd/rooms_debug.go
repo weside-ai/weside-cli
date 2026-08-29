@@ -523,9 +523,11 @@ func prettyData(data string) string {
 // an error). Under ndjson, heartbeat comments are counted rather than
 // written to out, and a one-line summary (frames, heartbeats, close reason)
 // goes to stderr — the default/raw forms keep their prior stdout contract
-// unchanged and stay silent on stderr. A malformed ndjson data payload, or a
-// genuine (non-cancellation) read error, comes back as err — deliberately no
-// retry, so a caller sees a break as a break.
+// unchanged and stay silent on stderr. A malformed ndjson data payload, a
+// genuine (non-cancellation) read error, or a failed write to out comes
+// back as err — deliberately no retry, so a caller sees a break as a break.
+// The stderr summary is best-effort: a failed write there never masks the
+// error being reported.
 func streamRoomEvents(ctx context.Context, r io.Reader, out, stderr io.Writer, raw, ndjson bool) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -562,18 +564,28 @@ func streamRoomEvents(ctx context.Context, r io.Reader, out, stderr io.Writer, r
 				return err
 			}
 		case raw:
-			fmt.Fprintf(out, "%s %s %s\n", orDash(eventType), orDash(curID), data)
+			if _, err := fmt.Fprintf(out, "%s %s %s\n", orDash(eventType), orDash(curID), data); err != nil {
+				return err
+			}
 		default:
 			if curID != "" {
-				fmt.Fprintf(out, "id: %s\n", curID)
+				if _, err := fmt.Fprintf(out, "id: %s\n", curID); err != nil {
+					return err
+				}
 			}
 			if eventType != "" {
-				fmt.Fprintf(out, "event: %s\n", eventType)
+				if _, err := fmt.Fprintf(out, "event: %s\n", eventType); err != nil {
+					return err
+				}
 			}
 			if data != "" {
-				fmt.Fprintf(out, "data: %s\n", prettyData(data))
+				if _, err := fmt.Fprintf(out, "data: %s\n", prettyData(data)); err != nil {
+					return err
+				}
 			}
-			fmt.Fprintln(out)
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
 		}
 		frames++
 		curID, eventType = "", ""
@@ -597,7 +609,10 @@ scanLoop:
 			if ndjson {
 				heartbeats++
 			} else {
-				fmt.Fprintf(out, "%s\n", line)
+				if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
+					flushErr = err
+					break scanLoop
+				}
 			}
 		case strings.HasPrefix(line, "id: "):
 			curID = strings.TrimPrefix(line, "id: ")
@@ -627,17 +642,17 @@ scanLoop:
 
 	switch {
 	case flushErr != nil:
-		fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", flushErr, frames, heartbeats)
+		_, _ = fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", flushErr, frames, heartbeats)
 		return flushErr
 	case readErr != nil && ctx.Err() != nil:
-		fmt.Fprintf(stderr, "events: interrupted (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		_, _ = fmt.Fprintf(stderr, "events: interrupted (frames=%d heartbeats=%d)\n", frames, heartbeats)
 		return nil
 	case readErr != nil:
 		wrapped := fmt.Errorf("reading event stream: %w", readErr)
-		fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", wrapped, frames, heartbeats)
+		_, _ = fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", wrapped, frames, heartbeats)
 		return wrapped
 	default:
-		fmt.Fprintf(stderr, "events: stream closed by server (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		_, _ = fmt.Fprintf(stderr, "events: stream closed by server (frames=%d heartbeats=%d)\n", frames, heartbeats)
 		return nil
 	}
 }
