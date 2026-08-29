@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -197,5 +199,167 @@ func TestRoomsCancelRequiresConfirm(t *testing.T) {
 	}
 	if err := roomsContextBreakCmd.RunE(roomsContextBreakCmd, []string{"1"}); err == nil {
 		t.Error("expected --confirm gate to block context-break without --confirm")
+	}
+}
+
+// sseFixtureBody is shared across the streamRoomEvents tests: a frame with
+// an id (the "connected" shape), a heartbeat comment in between (counted,
+// never printed under --ndjson), a frame without an id (the "reconnect"
+// shape), and a multi-line data: payload joined by \n before being parsed.
+const sseFixtureBody = "id: cur-1\n" +
+	"event: connected\n" +
+	"data: {\"room_id\":1,\"device_id\":\"d1\"}\n" +
+	"\n" +
+	": heartbeat\n" +
+	"event: reconnect\n" +
+	"data: {\"type\":\"reconnect\"}\n" +
+	"\n" +
+	"id: cur-2\n" +
+	"event: room_message_delta\n" +
+	"data: {\"a\":1,\n" +
+	"data: \"b\":2}\n" +
+	"\n"
+
+func TestStreamRoomEventsNDJSONParsesFrames(t *testing.T) {
+	var out, stderr bytes.Buffer
+	err := streamRoomEvents(context.Background(), strings.NewReader(sseFixtureBody), &out, &stderr, false, true)
+	if err != nil {
+		t.Fatalf("streamRoomEvents: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 NDJSON lines, got %d: %q", len(lines), out.String())
+	}
+	if strings.Contains(out.String(), "heartbeat") {
+		t.Errorf("heartbeat comment leaked into stdout: %q", out.String())
+	}
+	if !strings.Contains(stderr.String(), "frames=3 heartbeats=1") {
+		t.Errorf("expected frames=3 heartbeats=1 summary on stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "stream closed by server") {
+		t.Errorf("expected a clean-close reason on stderr, got %q", stderr.String())
+	}
+
+	var first ndjsonFrame
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("unmarshal first line: %v", err)
+	}
+	if first.Event != "connected" || first.ID != "cur-1" {
+		t.Errorf("first frame = %+v", first)
+	}
+	data, _ := first.Data.(map[string]any)
+	if fmt.Sprintf("%v", data["device_id"]) != "d1" {
+		t.Errorf("first frame data = %v", first.Data)
+	}
+
+	var second ndjsonFrame
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("unmarshal second line: %v", err)
+	}
+	if second.Event != "reconnect" || second.ID != "" {
+		t.Errorf("second frame (no id) = %+v", second)
+	}
+
+	var third ndjsonFrame
+	if err := json.Unmarshal([]byte(lines[2]), &third); err != nil {
+		t.Fatalf("unmarshal third line: %v", err)
+	}
+	if third.ID != "cur-2" {
+		t.Errorf("third frame id = %q", third.ID)
+	}
+	thirdData, _ := third.Data.(map[string]any)
+	if fmt.Sprintf("%v", thirdData["a"]) != "1" || fmt.Sprintf("%v", thirdData["b"]) != "2" {
+		t.Errorf("multi-line data payload not joined correctly: %v", third.Data)
+	}
+}
+
+func TestStreamRoomEventsNDJSONMalformedDataIsAnError(t *testing.T) {
+	body := "event: connected\ndata: {not json}\n\n"
+	var out, stderr bytes.Buffer
+	err := streamRoomEvents(context.Background(), strings.NewReader(body), &out, &stderr, false, true)
+	if err == nil {
+		t.Fatal("expected an error on malformed data, got nil")
+	}
+	if !strings.Contains(stderr.String(), "frames=0") {
+		t.Errorf("expected the summary on stderr even on error, got %q", stderr.String())
+	}
+}
+
+type erroringReader struct{}
+
+func (erroringReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("connection reset")
+}
+
+type erroringWriter struct{}
+
+func (erroringWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("broken pipe")
+}
+
+func TestStreamRoomEventsNDJSONCancelledContextIsNotAnError(t *testing.T) {
+	// A cancelled context turns a read error into a clean stop (SIGINT path),
+	// reported on stderr but not returned as an error.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, stderr bytes.Buffer
+	err := streamRoomEvents(ctx, &erroringReader{}, &out, &stderr, false, true)
+	if err != nil {
+		t.Fatalf("expected no error once ctx is cancelled, got %v", err)
+	}
+	if !strings.Contains(stderr.String(), "interrupted") {
+		t.Errorf("expected an interrupted reason on stderr, got %q", stderr.String())
+	}
+}
+
+func TestStreamRoomEventsDefaultAndRawUnchanged(t *testing.T) {
+	var defaultOut, rawOut, stderr bytes.Buffer
+
+	if err := streamRoomEvents(context.Background(), strings.NewReader(sseFixtureBody), &defaultOut, &stderr, false, false); err != nil {
+		t.Fatalf("default form: %v", err)
+	}
+	if !strings.Contains(defaultOut.String(), "id: cur-1\nevent: connected\n") {
+		t.Errorf("default form output changed: %q", defaultOut.String())
+	}
+	if !strings.Contains(defaultOut.String(), ": heartbeat") {
+		t.Errorf("default form must still surface the heartbeat comment: %q", defaultOut.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("default form must stay silent on stderr, got %q", stderr.String())
+	}
+
+	if err := streamRoomEvents(context.Background(), strings.NewReader(sseFixtureBody), &rawOut, &stderr, true, false); err != nil {
+		t.Fatalf("raw form: %v", err)
+	}
+	if !strings.Contains(rawOut.String(), "connected cur-1 ") {
+		t.Errorf("raw form output changed: %q", rawOut.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("raw form must stay silent on stderr, got %q", stderr.String())
+	}
+}
+
+func TestStreamRoomEventsWriteErrorIsReturned(t *testing.T) {
+	// A failed write to out comes back as err ("a break as a break"), for
+	// frame writes and SSE comment lines alike.
+	var stderr bytes.Buffer
+	err := streamRoomEvents(context.Background(), strings.NewReader(sseFixtureBody), erroringWriter{}, &stderr, false, false)
+	if err == nil {
+		t.Fatal("expected the frame write error to be returned")
+	}
+
+	err = streamRoomEvents(context.Background(), strings.NewReader(": heartbeat\n\n"), erroringWriter{}, &stderr, false, false)
+	if err == nil {
+		t.Fatal("expected the comment-line write error to be returned")
+	}
+}
+
+func TestRoomsEventsRawAndNDJSONAreMutuallyExclusive(t *testing.T) {
+	eventsRaw, eventsNDJSON = true, true
+	defer func() { eventsRaw, eventsNDJSON = false, false }()
+
+	if err := roomsEventsCmd.RunE(roomsEventsCmd, []string{"1"}); err == nil {
+		t.Error("expected --raw + --ndjson to be rejected before any request is made")
 	}
 }
