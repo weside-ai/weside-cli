@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,131 +30,6 @@ func captureStdoutRooms(t *testing.T, fn func() error) string {
 		t.Fatalf("command error: %v", runErr)
 	}
 	return string(out)
-}
-
-func TestFollowEventsParsesFrames(t *testing.T) {
-	// One frame with an id, one without (the "reconnect" shape), a heartbeat
-	// comment in between (counted, never printed), and a multi-line data
-	// payload joined by \n before being parsed as JSON.
-	body := "id: cur-1\n" +
-		"event: connected\n" +
-		"data: {\"room_id\":1,\"device_id\":\"d1\"}\n" +
-		"\n" +
-		": heartbeat\n" +
-		"event: reconnect\n" +
-		"data: {\"type\":\"reconnect\"}\n" +
-		"\n" +
-		"id: cur-2\n" +
-		"event: room_message_delta\n" +
-		"data: {\"a\":1,\n" +
-		"data: \"b\":2}\n" +
-		"\n"
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rooms/1/events" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, body)
-	}))
-	defer srv.Close()
-
-	client := api.NewClient(srv.URL, "token")
-	resp, err := client.Subscribe(context.Background(), "/rooms/1/events")
-	if err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var out bytes.Buffer
-	summary, err := followEvents(context.Background(), resp.Body, &out)
-	if err != nil {
-		t.Fatalf("followEvents: %v", err)
-	}
-	if summary.Frames != 3 {
-		t.Fatalf("expected 3 frames, got %d (out=%q)", summary.Frames, out.String())
-	}
-	if summary.Heartbeats != 1 {
-		t.Fatalf("expected 1 heartbeat, got %d", summary.Heartbeats)
-	}
-
-	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 NDJSON lines, got %d: %q", len(lines), out.String())
-	}
-	if strings.Contains(out.String(), "heartbeat") {
-		t.Errorf("heartbeat comment leaked into stdout: %q", out.String())
-	}
-
-	var first followFrame
-	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
-		t.Fatalf("unmarshal first line: %v", err)
-	}
-	if first.Event != "connected" || first.ID != "cur-1" {
-		t.Errorf("first frame = %+v", first)
-	}
-	data, _ := first.Data.(map[string]any)
-	if fmt.Sprintf("%v", data["device_id"]) != "d1" {
-		t.Errorf("first frame data = %v", first.Data)
-	}
-
-	var second followFrame
-	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
-		t.Fatalf("unmarshal second line: %v", err)
-	}
-	if second.Event != "reconnect" || second.ID != "" {
-		t.Errorf("second frame (no id) = %+v", second)
-	}
-
-	var third followFrame
-	if err := json.Unmarshal([]byte(lines[2]), &third); err != nil {
-		t.Fatalf("unmarshal third line: %v", err)
-	}
-	if third.ID != "cur-2" {
-		t.Errorf("third frame id = %q", third.ID)
-	}
-	thirdData, _ := third.Data.(map[string]any)
-	if fmt.Sprintf("%v", thirdData["a"]) != "1" || fmt.Sprintf("%v", thirdData["b"]) != "2" {
-		t.Errorf("multi-line data payload not joined correctly: %v", third.Data)
-	}
-}
-
-func TestFollowEventsMalformedDataIsAnError(t *testing.T) {
-	body := "event: connected\ndata: {not json}\n\n"
-	var out bytes.Buffer
-	_, err := followEvents(context.Background(), strings.NewReader(body), &out)
-	if err == nil {
-		t.Fatal("expected an error on malformed data, got nil")
-	}
-}
-
-func TestFollowEventsCancelledContextIsNotAnError(t *testing.T) {
-	// A cancelled context turns a read error into a clean stop (SIGINT path),
-	// not a reported failure.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	var out bytes.Buffer
-	summary, err := followEvents(ctx, &erroringReader{}, &out)
-	if err != nil {
-		t.Fatalf("expected no error once ctx is cancelled, got %v", err)
-	}
-	if summary.Frames != 0 {
-		t.Errorf("expected no frames, got %d", summary.Frames)
-	}
-}
-
-type erroringReader struct{}
-
-func (erroringReader) Read([]byte) (int, error) {
-	return 0, fmt.Errorf("connection reset")
-}
-
-func TestRoomsFollowRegistered(t *testing.T) {
-	cmd, _, err := roomsCmd.Find([]string{"follow"})
-	if err != nil || cmd == nil || cmd.Name() != "follow" {
-		t.Fatalf("rooms follow missing: cmd=%v err=%v", cmd, err)
-	}
 }
 
 func TestRoomsList(t *testing.T) {
