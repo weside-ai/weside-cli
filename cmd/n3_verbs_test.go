@@ -184,7 +184,9 @@ func TestNotesDeleteBuildsTheRightRequest(t *testing.T) {
 // commit_sha, the field the story's verification reads to prove the delete
 // survived as a commit rather than a bare API call.
 func TestNotesDeleteJSONCarriesCommitSHA(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The request shape is pinned by TestNotesDeleteBuildsTheRightRequest; this
+	// handler only needs to answer, so it ignores the request.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"path":"inbox/shot.png","deleted":true,"count":1,"commit_sha":"deadbeef01"}`)
 	}))
