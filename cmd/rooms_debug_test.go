@@ -191,14 +191,30 @@ func TestRoomsGroupCommand(t *testing.T) {
 
 func TestRoomsCancelRequiresConfirm(t *testing.T) {
 	// No server: the --confirm gate must fail before any request.
-	if err := roomsCancelCmd.RunE(roomsCancelCmd, []string{"1"}); err == nil {
-		t.Error("expected --confirm gate to block cancel without --confirm")
+	//
+	// Assert on WHICH error, not merely that one came back. Without a gate
+	// these commands still fail — on `newAuthenticatedClientV2`, which has no
+	// credentials here — so `err != nil` alone stays green with the gate
+	// deleted. Measured while adding regenerate: the naive form passed under a
+	// mutation that removed the gate entirely.
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{"cancel", func() error { return roomsCancelCmd.RunE(roomsCancelCmd, []string{"1"}) }},
+		{"undo", func() error { return roomsUndoCmd.RunE(roomsUndoCmd, []string{"1"}) }},
+		{"context-break", func() error { return roomsContextBreakCmd.RunE(roomsContextBreakCmd, []string{"1"}) }},
+		{"regenerate", func() error { return roomsRegenerateCmd.RunE(roomsRegenerateCmd, []string{"1"}) }},
 	}
-	if err := roomsUndoCmd.RunE(roomsUndoCmd, []string{"1"}); err == nil {
-		t.Error("expected --confirm gate to block undo without --confirm")
-	}
-	if err := roomsContextBreakCmd.RunE(roomsContextBreakCmd, []string{"1"}); err == nil {
-		t.Error("expected --confirm gate to block context-break without --confirm")
+	for _, tc := range cases {
+		err := tc.run()
+		if err == nil {
+			t.Errorf("%s: expected the --confirm gate to block it", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "--confirm") {
+			t.Errorf("%s: expected the gate's own refusal naming --confirm, got %q", tc.name, err.Error())
+		}
 	}
 }
 

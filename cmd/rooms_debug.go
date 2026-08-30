@@ -298,6 +298,60 @@ var roomsUndoCmd = &cobra.Command{
 	},
 }
 
+var roomsRegenerateCmd = &cobra.Command{
+	Use:   "regenerate <room_id>",
+	Short: "Regenerate the newest 1:1 turn in a room (delete + re-send, idempotent)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		if !roomsConfirm {
+			return fmt.Errorf("this discards the last answer and buys a new one — pass --confirm to proceed")
+		}
+		client, err := newAuthenticatedClientV2()
+		if err != nil {
+			return err
+		}
+
+		// Same "name the turn you mean" contract as undo: the endpoint acts on
+		// the room's newest turn and answers 409 when that turn does not
+		// contain the id. Read the newest message and hand its id back, so a
+		// turn landing in between becomes that 409 rather than a regenerate of
+		// something the caller never saw.
+		var timeline map[string]any
+		if err := client.Get(context.Background(), "/rooms/"+args[0]+"/messages?limit=1", &timeline); err != nil {
+			return fmt.Errorf("reading room timeline: %w", err)
+		}
+		messages := asSlice(timeline["messages"])
+		if len(messages) == 0 {
+			return fmt.Errorf("room %s has no messages to regenerate", args[0])
+		}
+		newest, _ := messages[len(messages)-1].(map[string]any)
+		expectedID, _ := newest["id"].(string)
+		if expectedID == "" {
+			return fmt.Errorf("room %s: newest message carries no id", args[0])
+		}
+
+		var result map[string]any
+		body := map[string]any{"expected_message_id": expectedID}
+		if err := client.Post(context.Background(), "/rooms/"+args[0]+"/regenerate", body, &result); err != nil {
+			return fmt.Errorf("regenerating turn: %w", err)
+		}
+
+		if IsJSON() {
+			// `replayed` is the point of the JSON shape: it is the
+			// machine-readable proof that a second call performed no side
+			// effect. Printing the whole body keeps that assertable.
+			ui.PrintJSON(result)
+			return nil
+		}
+		if replayed, _ := result["replayed"].(bool); replayed {
+			fmt.Println("Already regenerated — replayed the first result, nothing deleted, nothing charged.")
+			return nil
+		}
+		ui.PrintSuccess("Regenerating (%d message(s) removed).", len(asSlice(result["removed_message_ids"])))
+		return nil
+	},
+}
+
 var roomsContextBreakCmd = &cobra.Command{
 	Use:   "context-break <room_id>",
 	Short: "Rotate the room's companion thread (force a fresh context)",
@@ -845,6 +899,7 @@ func init() {
 	roomsCmd.AddCommand(roomsToolCallCmd)
 	roomsCmd.AddCommand(roomsCancelCmd)
 	roomsCmd.AddCommand(roomsUndoCmd)
+	roomsCmd.AddCommand(roomsRegenerateCmd)
 	roomsCmd.AddCommand(roomsContextBreakCmd)
 	roomsCmd.AddCommand(roomsRenameCmd)
 	roomsCmd.AddCommand(roomsGroupCmd)
