@@ -698,7 +698,7 @@ var roomsInvitesListCmd = &cobra.Command{
 
 var roomsInvitesCreateCmd = &cobra.Command{
 	Use:   "create <room_id>",
-	Short: "Mint a 7-day multi-use invite for a group room",
+	Short: "Mint a 7-day single-use invite for a group room",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClientV2()
