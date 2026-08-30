@@ -885,6 +885,7 @@ func init() {
 	roomsCancelCmd.Flags().StringVar(&roomsCancelServerMsgID, "server-message-id", "", "cancel a specific turn")
 	roomsCancelCmd.Flags().StringVar(&roomsCancelPartial, "partial-content", "", "persist partial content before cancelling")
 	roomsUndoCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
+	roomsRegenerateCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
 	roomsContextBreakCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
 	roomsRenameCmd.Flags().BoolVar(&roomsRenameClear, "clear", false, "clear the title instead of setting it")
 	roomsGroupCmd.Flags().StringVar(&roomsGroupCompanions, "companions", "", "comma-separated companion ids (required)")

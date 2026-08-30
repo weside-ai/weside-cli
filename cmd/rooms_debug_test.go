@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/weside-ai/weside-cli/internal/api"
 )
 
@@ -186,6 +188,21 @@ func TestRoomsGroupCommand(t *testing.T) {
 	}
 	if fmt.Sprintf("%v", result["id"]) != "9" {
 		t.Errorf("expected group room id 9, got %v", result["id"])
+	}
+}
+
+// TestRoomsDestructiveCommandsRegisterConfirm pins what the RunE-level gate
+// test cannot see: calling RunE directly bypasses cobra's flag parsing, so a
+// command whose --confirm flag was never registered passes that test while
+// being unusable ("unknown flag: --confirm"). Measured on the live endpoint
+// while adding regenerate.
+func TestRoomsDestructiveCommandsRegisterConfirm(t *testing.T) {
+	for _, c := range []*cobra.Command{
+		roomsCancelCmd, roomsUndoCmd, roomsContextBreakCmd, roomsRegenerateCmd,
+	} {
+		if c.Flags().Lookup("confirm") == nil {
+			t.Errorf("%s: --confirm is not a registered flag", c.Name())
+		}
 	}
 }
 
