@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -208,9 +209,37 @@ func TestSendChat_IgnoresUserMessageEcho(t *testing.T) {
 // thing and pass for the wrong reason.
 func hangingChatServer(t *testing.T, sse string) *httptest.Server {
 	t.Helper()
+	return hangingChatServerWithCancel(t, sse, nil, true)
+}
+
+// cancelCall is what the server saw on /turns/cancel — WA-2140's whole subject.
+type cancelCall struct {
+	body map[string]any
+}
+
+// hangingChatServerWithCancel adds the cancel endpoint hangingChatServer hides.
+// `cancelled` is the answer the endpoint gives: false models "no turn was
+// running", the case that must make the CLI exit non-zero rather than print a
+// reassuring line. Calls land in *calls under the mutex, because the timer
+// path issues the cancel from its own goroutine.
+func hangingChatServerWithCancel(
+	t *testing.T, sse string, calls *[]cancelCall, cancelled bool,
+) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/turns/cancel") && r.Method == http.MethodPost:
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			if calls != nil {
+				*calls = append(*calls, cancelCall{body: body})
+			}
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"cancelled":%t}`, cancelled)
 		case strings.HasSuffix(r.URL.Path, "/events") && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
@@ -427,5 +456,134 @@ func TestSendChat_AbortAfterJSON(t *testing.T) {
 	}
 	if doc["server_message_id"] != "srv-99" {
 		t.Errorf("expected server_message_id srv-99, got %v", doc["server_message_id"])
+	}
+}
+
+// --------------------------------------------------------------------------
+// WA-2140: the abort must cancel the TURN, not just the listener
+// --------------------------------------------------------------------------
+
+// TestSendChat_AbortCancelsTheTurn is the story's reason to exist. Before
+// WA-2140 the abort tore down the SSE subscription and nothing else, while the
+// turn ran on in a server-side background task — so the ledger row a verifier
+// then read was the row an uncancelled turn writes anyway. Asserting that the
+// cancel endpoint was called with THIS turn's id is what separates the two.
+func TestSendChat_AbortCancelsTheTurn(t *testing.T) {
+	prev := chatStream
+	chatStream = true
+	t.Cleanup(func() { chatStream = prev })
+
+	sse := "data: {\"type\":\"connected\"}\n\n" +
+		"data: {\"type\":\"room_message_start\",\"server_message_id\":\"srv-2140\"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"srv-2140\",\"delta\":\"one \"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"srv-2140\",\"delta\":\"two \"}\n\n"
+	var calls []cancelCall
+	srv := hangingChatServerWithCancel(t, sse, &calls, true)
+
+	client := api.NewClient(srv.URL, "token")
+	var err error
+	_ = captureStderr(t, func() {
+		_ = captureStdout(t, func() error {
+			err = sendChat(context.Background(), client, 1, "hi", abortBound{deltas: 1})
+			return err
+		})
+	})
+
+	if err != nil {
+		t.Fatalf("a successful cancel is the requested outcome, got %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly one cancel request, got %d", len(calls))
+	}
+	if got := calls[0].body["server_message_id"]; got != "srv-2140" {
+		t.Errorf("the cancel must name the turn it is stopping, got %v", got)
+	}
+}
+
+// TestSendChat_CancelledFalseFails pins AC2. A `cancelled: false` answer means
+// nothing was stopped, so any ledger row read afterwards proves nothing —
+// exiting 0 here would rebuild the false green the story removes.
+func TestSendChat_CancelledFalseFails(t *testing.T) {
+	prev := chatStream
+	chatStream = true
+	t.Cleanup(func() { chatStream = prev })
+
+	sse := "data: {\"type\":\"connected\"}\n\n" +
+		"data: {\"type\":\"room_message_start\",\"server_message_id\":\"srv-noop\"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"srv-noop\",\"delta\":\"one \"}\n\n"
+	srv := hangingChatServerWithCancel(t, sse, nil, false)
+
+	// captureStdout fails the test on a returned error, which is the expected
+	// outcome here — so the call runs without it and stdout is left alone.
+	client := api.NewClient(srv.URL, "token")
+	var err error
+	_ = captureStderr(t, func() {
+		err = sendChat(context.Background(), client, 1, "hi", abortBound{deltas: 1})
+	})
+
+	if err == nil {
+		t.Fatal("a cancel that cancelled nothing must fail the run, got nil")
+	}
+	if !strings.Contains(err.Error(), "proves nothing") {
+		t.Errorf("the error must say why the run is worthless, got %q", err.Error())
+	}
+}
+
+// TestSendChat_DurationCancelsWithoutTurnID covers AC3: the deadline fires
+// before room_message_start, so no id is known. The cancel still goes out,
+// without server_message_id — a turn that produced no token yet is exactly the
+// zero-usage case WA-2125's subcase 2 is about, and skipping it would leave the
+// verb blind where it is needed most.
+func TestSendChat_DurationCancelsWithoutTurnID(t *testing.T) {
+	prev := chatStream
+	chatStream = true
+	t.Cleanup(func() { chatStream = prev })
+
+	sse := "data: {\"type\":\"connected\"}\n\n"
+	var calls []cancelCall
+	srv := hangingChatServerWithCancel(t, sse, &calls, true)
+
+	client := api.NewClient(srv.URL, "token")
+	_ = captureStderr(t, func() {
+		_ = captureStdout(t, func() error {
+			return sendChat(context.Background(), client, 1, "hi", abortBound{after: 150 * time.Millisecond})
+		})
+	})
+
+	if len(calls) != 1 {
+		t.Fatalf("the deadline must cancel even with no turn id yet, got %d call(s)", len(calls))
+	}
+	if _, present := calls[0].body["server_message_id"]; present {
+		t.Errorf("with no id known the field must be omitted, got %v", calls[0].body)
+	}
+}
+
+// TestSendChat_NoBoundSendsNoCancel is AC6's pin. This story edits the shared
+// send path, so the ordinary chat must be shown untouched — otherwise every
+// `weside chat` would start stopping its own turns.
+func TestSendChat_NoBoundSendsNoCancel(t *testing.T) {
+	prev := chatStream
+	chatStream = true
+	t.Cleanup(func() { chatStream = prev })
+
+	sse := "data: {\"type\":\"connected\"}\n\n" +
+		"data: {\"type\":\"room_message_start\",\"server_message_id\":\"srv-ok\"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"srv-ok\",\"delta\":\"done\"}\n\n" +
+		"data: {\"type\":\"room_message_complete\",\"server_message_id\":\"srv-ok\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\n\n"
+	var calls []cancelCall
+	srv := hangingChatServerWithCancel(t, sse, &calls, true)
+
+	client := api.NewClient(srv.URL, "token")
+	var err error
+	_ = captureStdout(t, func() error {
+		err = sendChat(context.Background(), client, 1, "hi", abortBound{})
+		return err
+	})
+
+	if err != nil {
+		t.Fatalf("the ordinary path must still complete, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("a chat without --abort-after must cancel nothing, got %d call(s)", len(calls))
 	}
 }

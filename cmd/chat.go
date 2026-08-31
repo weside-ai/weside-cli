@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -74,10 +76,15 @@ Examples:
   weside chat nox -m "Tell me a story" --stream
   echo "Hi there" | weside chat nox
 
---abort-after drops the stream mid-turn, the way a closed app does. Use it to
-verify that an abandoned turn is still billed (WA-2125): the command prints the
-room id and the turn's server_message_id it walked away from, and exits 0, so
-you can look that turn up in usage_ledger.
+--abort-after cancels the running turn mid-answer, the way the app's Stop button
+does, and drops the stream on top of it. Use it to verify that a cancelled turn
+is still billed (WA-2125): the command prints the room id and the turn's
+server_message_id, and exits 0, so you can look that turn up in usage_ledger.
+
+Compare against an uncancelled run of the same prompt — a single aborted run
+cannot tell "cancelled and billed" from "ran to completion and billed". If the
+server had nothing to cancel (the turn already finished, or none was running),
+the command exits NON-ZERO and says so: that run proves nothing.
 
   weside chat nox -m "Erzähl mir eine lange Geschichte" --stream --abort-after 3
   weside chat nox -m "Erzähl mir eine lange Geschichte" --stream --abort-after 2s`,
@@ -223,9 +230,28 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Written by the scanner loop, read by the timer's goroutine.
+	var abortTurnID atomic.Pointer[string]
+	emptyTurnID := ""
+	abortTurnID.Store(&emptyTurnID)
+
 	aborted := false
+	// The cancel is issued exactly once, from whichever abort path fires
+	// first, and it runs on the CALLER's context — never on streamCtx, which
+	// the teardown below cancels; a cancel on that context would abort itself.
+	var cancelOnce sync.Once
+	var cancelErr error
+	cancelTurn := func(id *string) error {
+		cancelOnce.Do(func() { cancelErr = cancelRoomTurn(ctx, client, roomID, *id) })
+		return cancelErr
+	}
 	abort := func() {
 		aborted = true
+		// Cancel BEFORE the teardown, not instead of it: the turn runs in a
+		// server-side background task publishing onto the room bus, so
+		// dropping the subscription ends nothing (WA-2140). A closed app drops
+		// both, which is why the teardown stays.
+		_ = cancelTurn(abortTurnID.Load())
 		cancelStream()
 	}
 
@@ -247,7 +273,9 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 			abortTimer.Stop()
 		}
 	}()
-	var turnID string              // server_message_id of our companion's turn
+	var turnID string // server_message_id of our companion's turn
+	// The timer fires on its own goroutine while this loop writes turnID, so
+	// the abort path reads it through an atomic rather than racing the scanner.
 	preActive := map[string]bool{} // active_turns from connected — ignore these
 
 	for scanner.Scan() {
@@ -292,6 +320,8 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 			// sent that isn't a pre-existing active turn.
 			if sent && smid != "" && !preActive[smid] && turnID == "" {
 				turnID = smid
+				captured := smid
+				abortTurnID.Store(&captured)
 			}
 		case "room_message_delta":
 			// Only accept deltas for our turn, and never in JSON mode
@@ -308,6 +338,10 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 				deltas++
 				if bound.deltas > 0 && deltas >= bound.deltas {
 					fmt.Println()
+					aborted = true
+					if err := cancelTurn(&turnID); err != nil {
+						return err
+					}
 					return reportAbort(roomID, turnID, deltas)
 				}
 			}
@@ -369,6 +403,9 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 		if streamed {
 			fmt.Println()
 		}
+		if cancelErr != nil {
+			return cancelErr
+		}
 		return reportAbort(roomID, turnID, deltas)
 	}
 	if err := scanner.Err(); err != nil {
@@ -380,14 +417,15 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 	return fmt.Errorf("event stream closed before the companion replied")
 }
 
-// reportAbort names the turn that was abandoned and exits successfully — the
-// abandonment IS the outcome the caller asked for. The identifiers go to
+// reportAbort names the turn that was cancelled and exits successfully — the
+// cancellation IS the outcome the caller asked for. The identifiers go to
 // stderr in text mode so they never mix into the streamed reply on stdout;
 // --json puts them on stdout as the command's document.
 func reportAbort(roomID int, turnID string, deltas int) error {
 	if IsJSON() {
 		ui.PrintJSON(map[string]any{
 			"aborted":           true,
+			"turn_cancelled":    true,
 			"room_id":           roomID,
 			"server_message_id": turnID,
 			"deltas_received":   deltas,
@@ -400,8 +438,74 @@ func reportAbort(roomID int, turnID string, deltas int) error {
 	fmt.Fprintf(
 		os.Stderr,
 		"aborted after %d delta(s): room_id=%d server_message_id=%s\n"+
-			"the turn keeps running server-side; look it up in usage_ledger (WA-2125)\n",
+			"the server-side turn was cancelled; look it up in usage_ledger (WA-2125)\n",
 		deltas, roomID, turnID,
+	)
+	return nil
+}
+
+// cancelRoomTurn stops the companion turn the server is running for us.
+//
+// WA-2140: tearing the SSE subscription down does NOT end the turn — it runs in
+// a background task publishing onto the room bus, and a listener that walks
+// away ends nothing. `POST /rooms/{id}/turns/cancel` sets the flag the turn
+// loop polls, which is what the app itself does when the user hits Stop.
+//
+// An empty turnID is sent as an omitted `server_message_id`, which the endpoint
+// documents as "offer the cancel to every companion thread in this room" — the
+// right semantic when the deadline fired before `room_message_start` arrived,
+// and precisely the zero-token case WA-2125 exists for.
+//
+// A `cancelled: false` answer is an ERROR here, not a shrug: it means no turn
+// was running or the id did not match, so nothing was cancelled and any ledger
+// row a caller reads afterwards proves nothing. Returning nil would rebuild the
+// false green this function was written to remove.
+func cancelRoomTurn(ctx context.Context, client *api.Client, roomID int, turnID string) error {
+	body := map[string]any{}
+	if turnID != "" {
+		body["server_message_id"] = turnID
+	}
+	path := fmt.Sprintf("/rooms/%d/turns/cancel", roomID)
+	var result map[string]any
+	if err := client.Post(ctx, path, body, &result); err != nil {
+		return fmt.Errorf("cancelling turn: %w", err)
+	}
+	if cancelled, _ := result["cancelled"].(bool); cancelled {
+		return nil
+	}
+
+	// Measured against production on 2026-09-01: the `server_message_id` the
+	// SSE stream publishes on `room_message_start` is NOT the id
+	// `CompletionCoordination` registers, so an id-matched cancel answers
+	// `cancelled: false` while an id-less one on the same live turn answers
+	// `cancelled: true`. Until the backend reconciles the two (see WA-2140's
+	// ticket comment), retry without the id — the endpoint documents that as
+	// "offer the cancel to every companion thread in this room", which in a
+	// single-turn verification room is our own turn.
+	if turnID == "" {
+		return fmt.Errorf(
+			"the server cancelled nothing (room_id=%d, no turn id known): no turn was "+
+				"running — this run proves nothing about the cancellation path",
+			roomID,
+		)
+	}
+	var retry map[string]any
+	if err := client.Post(ctx, path, map[string]any{}, &retry); err != nil {
+		return fmt.Errorf("cancelling turn without an id: %w", err)
+	}
+	if cancelled, _ := retry["cancelled"].(bool); !cancelled {
+		return fmt.Errorf(
+			"the server cancelled nothing (room_id=%d server_message_id=%q, and the "+
+				"id-less retry cancelled nothing either): no turn was running, or it had "+
+				"already finished — this run proves nothing about the cancellation path",
+			roomID, turnID,
+		)
+	}
+	fmt.Fprintf(
+		os.Stderr,
+		"note: the cancel matched no turn under server_message_id=%s and succeeded "+
+			"without it — the streamed id is not the registered one (WA-2140)\n",
+		turnID,
 	)
 	return nil
 }
@@ -448,6 +552,6 @@ func init() {
 	chatCmd.Flags().StringVarP(&chatMessage, "message", "m", "", "message to send")
 	chatCmd.Flags().BoolVar(&chatStream, "stream", false, "print the reply token-by-token as it streams")
 	chatCmd.Flags().StringVarP(&chatFile, "file", "f", "", "read message from file")
-	chatCmd.Flags().StringVar(&chatAbortAfter, "abort-after", "", "abandon the stream after N delta chunks (e.g. 3) or a duration (e.g. 2s), then exit 0")
+	chatCmd.Flags().StringVar(&chatAbortAfter, "abort-after", "", "cancel the turn after N delta chunks (e.g. 3) or a duration (e.g. 2s), then exit 0")
 	rootCmd.AddCommand(chatCmd)
 }
