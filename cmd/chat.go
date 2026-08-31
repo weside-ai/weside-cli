@@ -34,8 +34,6 @@ type abortBound struct {
 	deltas int
 }
 
-func (b abortBound) set() bool { return b.after > 0 || b.deltas > 0 }
-
 // parseAbortAfter reads a duration ("2s", "1500ms") or a plain chunk count
 // ("3"). A bare integer is a count, not seconds: "3" meaning three seconds
 // would silently make every count-based verification time-based on a slow
@@ -237,6 +235,18 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 	sent := false
 	streamed := false
 	deltas := 0
+
+	// The deadline timer is created once, inside the loop, at the moment the
+	// message goes out — but its Stop belongs here. A `defer` inside the loop
+	// is what golangci-lint's deferInLoop refuses, and rightly: the guard that
+	// makes it fire once today is three branches away from the defer, so the
+	// shape survives only as long as nobody moves the send.
+	var abortTimer *time.Timer
+	defer func() {
+		if abortTimer != nil {
+			abortTimer.Stop()
+		}
+	}()
 	var turnID string              // server_message_id of our companion's turn
 	preActive := map[string]bool{} // active_turns from connected — ignore these
 
@@ -274,8 +284,7 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 				if bound.after > 0 {
 					// Measured from the send, not from subscription: the
 					// provider's first token is what the clock is racing.
-					timer := time.AfterFunc(bound.after, abort)
-					defer timer.Stop()
+					abortTimer = time.AfterFunc(bound.after, abort)
 				}
 			}
 		case "room_message_start":
