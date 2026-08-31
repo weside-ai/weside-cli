@@ -83,6 +83,7 @@ weside chat --stream -m "Tell me a story"
 | `weside chat -m "message"` | Send a message (uses default Companion) |
 | `weside chat nox -m "message"` | Send to specific Companion |
 | `weside chat --stream -m "msg"` | Stream the response live |
+| `weside chat --stream --abort-after 3 -m "msg"` | Abandon the stream after 3 chunks (or a duration like `2s`) and print the room id and `server_message_id` of the turn walked away from — exits 0 |
 | `weside chat --new -m "msg"` | Start a new thread |
 | `weside chat -t <thread_id> -m "msg"` | Continue specific thread |
 | `weside chat -f file.txt` | Send message from file |

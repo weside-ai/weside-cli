@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -19,10 +20,44 @@ import (
 )
 
 var (
-	chatMessage string
-	chatStream  bool
-	chatFile    string
+	chatMessage    string
+	chatStream     bool
+	chatFile       string
+	chatAbortAfter string
 )
+
+// abortBound is a parsed --abort-after value: either a wall-clock deadline
+// measured from the moment the message was sent, or a number of received
+// delta frames. Exactly one of the two is set.
+type abortBound struct {
+	after  time.Duration
+	deltas int
+}
+
+// parseAbortAfter reads a duration ("2s", "1500ms") or a plain chunk count
+// ("3"). A bare integer is a count, not seconds: "3" meaning three seconds
+// would silently make every count-based verification time-based on a slow
+// provider, which is the one thing this flag exists to avoid.
+func parseAbortAfter(raw string) (abortBound, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return abortBound{}, nil
+	}
+	if n, err := strconv.Atoi(raw); err == nil {
+		if n <= 0 {
+			return abortBound{}, fmt.Errorf("--abort-after chunk count must be > 0, got %d", n)
+		}
+		return abortBound{deltas: n}, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return abortBound{}, fmt.Errorf("--abort-after %q is neither a chunk count nor a duration (try 3 or 2s)", raw)
+	}
+	if d <= 0 {
+		return abortBound{}, fmt.Errorf("--abort-after duration must be > 0, got %s", d)
+	}
+	return abortBound{after: d}, nil
+}
 
 var chatCmd = &cobra.Command{
 	Use:   "chat [companion]",
@@ -37,7 +72,15 @@ room, and the companion's reply arrives over the room event stream.
 Examples:
   weside chat -m "Hello!"
   weside chat nox -m "Tell me a story" --stream
-  echo "Hi there" | weside chat nox`,
+  echo "Hi there" | weside chat nox
+
+--abort-after drops the stream mid-turn, the way a closed app does. Use it to
+verify that an abandoned turn is still billed (WA-2125): the command prints the
+room id and the turn's server_message_id it walked away from, and exits 0, so
+you can look that turn up in usage_ledger.
+
+  weside chat nox -m "Erzähl mir eine lange Geschichte" --stream --abort-after 3
+  weside chat nox -m "Erzähl mir eine lange Geschichte" --stream --abort-after 2s`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Companion resolution still uses v1 (companions list is v1).
@@ -73,7 +116,12 @@ Examples:
 			return err
 		}
 
-		return sendChat(cmd.Context(), client, roomID, message)
+		bound, err := parseAbortAfter(chatAbortAfter)
+		if err != nil {
+			return err
+		}
+
+		return sendChat(cmd.Context(), client, roomID, message, bound)
 	},
 }
 
@@ -161,18 +209,44 @@ func newClientMessageID() string {
 // not missed — the background turn only starts after the POST returns.
 // Events are correlated by server_message_id so a pre-existing or concurrent
 // turn's events don't leak into this invocation.
-func sendChat(ctx context.Context, client *api.Client, roomID int, content string) error {
-	resp, err := client.Subscribe(ctx, fmt.Sprintf("/rooms/%d/events", roomID))
+func sendChat(ctx context.Context, client *api.Client, roomID int, content string, bound abortBound) error {
+	// A separate, cancellable context for the SSE request only: cancelling it
+	// tears the connection down mid-body, which is exactly the client
+	// disconnect --abort-after is here to reproduce. The POST keeps the
+	// caller's context so an abort can never cancel the send itself.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	resp, err := client.Subscribe(streamCtx, fmt.Sprintf("/rooms/%d/events", roomID))
 	if err != nil {
 		return fmt.Errorf("opening event stream: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	aborted := false
+	abort := func() {
+		aborted = true
+		cancelStream()
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	sent := false
 	streamed := false
+	deltas := 0
+
+	// The deadline timer is created once, inside the loop, at the moment the
+	// message goes out — but its Stop belongs here. A `defer` inside the loop
+	// is what golangci-lint's deferInLoop refuses, and rightly: the guard that
+	// makes it fire once today is three branches away from the defer, so the
+	// shape survives only as long as nobody moves the send.
+	var abortTimer *time.Timer
+	defer func() {
+		if abortTimer != nil {
+			abortTimer.Stop()
+		}
+	}()
 	var turnID string              // server_message_id of our companion's turn
 	preActive := map[string]bool{} // active_turns from connected — ignore these
 
@@ -207,6 +281,11 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 					return err
 				}
 				sent = true
+				if bound.after > 0 {
+					// Measured from the send, not from subscription: the
+					// provider's first token is what the clock is racing.
+					abortTimer = time.AfterFunc(bound.after, abort)
+				}
 			}
 		case "room_message_start":
 			// Capture our turn's correlation ID — the first start after we
@@ -226,6 +305,11 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 			if delta, ok := event["delta"].(string); ok && delta != "" {
 				fmt.Print(delta)
 				streamed = true
+				deltas++
+				if bound.deltas > 0 && deltas >= bound.deltas {
+					fmt.Println()
+					return reportAbort(roomID, turnID, deltas)
+				}
 			}
 		case "room_message_complete":
 			msg, _ := event["message"].(map[string]any)
@@ -277,6 +361,16 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 			return fmt.Errorf("companion error event received")
 		}
 	}
+	// An abort tears the connection down, so the scanner ends with a read
+	// error on a cancelled request. That is the success path here, and it is
+	// checked BEFORE scanner.Err() — otherwise the intended abort would be
+	// reported as a transport failure.
+	if aborted {
+		if streamed {
+			fmt.Println()
+		}
+		return reportAbort(roomID, turnID, deltas)
+	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("reading event stream: %w", err)
 	}
@@ -284,6 +378,32 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 		return fmt.Errorf("event stream closed before subscription was established")
 	}
 	return fmt.Errorf("event stream closed before the companion replied")
+}
+
+// reportAbort names the turn that was abandoned and exits successfully — the
+// abandonment IS the outcome the caller asked for. The identifiers go to
+// stderr in text mode so they never mix into the streamed reply on stdout;
+// --json puts them on stdout as the command's document.
+func reportAbort(roomID int, turnID string, deltas int) error {
+	if IsJSON() {
+		ui.PrintJSON(map[string]any{
+			"aborted":           true,
+			"room_id":           roomID,
+			"server_message_id": turnID,
+			"deltas_received":   deltas,
+		})
+		return nil
+	}
+	if turnID == "" {
+		turnID = "(no room_message_start seen — the turn may not have started)"
+	}
+	fmt.Fprintf(
+		os.Stderr,
+		"aborted after %d delta(s): room_id=%d server_message_id=%s\n"+
+			"the turn keeps running server-side; look it up in usage_ledger (WA-2125)\n",
+		deltas, roomID, turnID,
+	)
+	return nil
 }
 
 // postMessage sends the user message to the room. The v2 endpoint returns the
@@ -328,5 +448,6 @@ func init() {
 	chatCmd.Flags().StringVarP(&chatMessage, "message", "m", "", "message to send")
 	chatCmd.Flags().BoolVar(&chatStream, "stream", false, "print the reply token-by-token as it streams")
 	chatCmd.Flags().StringVarP(&chatFile, "file", "f", "", "read message from file")
+	chatCmd.Flags().StringVar(&chatAbortAfter, "abort-after", "", "abandon the stream after N delta chunks (e.g. 3) or a duration (e.g. 2s), then exit 0")
 	rootCmd.AddCommand(chatCmd)
 }
