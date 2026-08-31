@@ -465,18 +465,48 @@ func cancelRoomTurn(ctx context.Context, client *api.Client, roomID int, turnID 
 	if turnID != "" {
 		body["server_message_id"] = turnID
 	}
+	path := fmt.Sprintf("/rooms/%d/turns/cancel", roomID)
 	var result map[string]any
-	if err := client.Post(ctx, fmt.Sprintf("/rooms/%d/turns/cancel", roomID), body, &result); err != nil {
+	if err := client.Post(ctx, path, body, &result); err != nil {
 		return fmt.Errorf("cancelling turn: %w", err)
 	}
-	if cancelled, _ := result["cancelled"].(bool); !cancelled {
+	if cancelled, _ := result["cancelled"].(bool); cancelled {
+		return nil
+	}
+
+	// Measured against production on 2026-09-01: the `server_message_id` the
+	// SSE stream publishes on `room_message_start` is NOT the id
+	// `CompletionCoordination` registers, so an id-matched cancel answers
+	// `cancelled: false` while an id-less one on the same live turn answers
+	// `cancelled: true`. Until the backend reconciles the two (see WA-2140's
+	// ticket comment), retry without the id — the endpoint documents that as
+	// "offer the cancel to every companion thread in this room", which in a
+	// single-turn verification room is our own turn.
+	if turnID == "" {
 		return fmt.Errorf(
-			"the server cancelled nothing (room_id=%d server_message_id=%q): no turn was "+
-				"running, or it had already finished — this run proves nothing about the "+
-				"cancellation path",
+			"the server cancelled nothing (room_id=%d, no turn id known): no turn was "+
+				"running — this run proves nothing about the cancellation path",
+			roomID,
+		)
+	}
+	var retry map[string]any
+	if err := client.Post(ctx, path, map[string]any{}, &retry); err != nil {
+		return fmt.Errorf("cancelling turn without an id: %w", err)
+	}
+	if cancelled, _ := retry["cancelled"].(bool); !cancelled {
+		return fmt.Errorf(
+			"the server cancelled nothing (room_id=%d server_message_id=%q, and the "+
+				"id-less retry cancelled nothing either): no turn was running, or it had "+
+				"already finished — this run proves nothing about the cancellation path",
 			roomID, turnID,
 		)
 	}
+	fmt.Fprintf(
+		os.Stderr,
+		"note: the cancel matched no turn under server_message_id=%s and succeeded "+
+			"without it — the streamed id is not the registered one (WA-2140)\n",
+		turnID,
+	)
 	return nil
 }
 
