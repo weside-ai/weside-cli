@@ -175,25 +175,33 @@ func TestRoomsShowRoleLabels(t *testing.T) {
 
 func TestRoomActivityQuery(t *testing.T) {
 	t.Run("scope last_turn reaches the wire", func(t *testing.T) {
-		q := roomActivityQuery(100, "", "last_turn")
+		q := roomActivityQuery(100, "last_turn")
 		if got := q.Get("scope"); got != "last_turn" {
 			t.Fatalf("scope = %q, want last_turn", got)
 		}
 		if got := q.Get("limit"); got != "100" {
 			t.Fatalf("limit = %q, want 100", got)
 		}
-		if _, ok := q["cursor"]; ok {
-			t.Fatal("cursor must be absent when unset")
-		}
 	})
 
 	t.Run("the default scope is not sent", func(t *testing.T) {
-		q := roomActivityQuery(50, "abc", "all")
+		q := roomActivityQuery(50, "all")
 		if _, ok := q["scope"]; ok {
 			t.Fatal("scope=all is the server default and must not be sent")
 		}
-		if got := q.Get("cursor"); got != "abc" {
-			t.Fatalf("cursor = %q, want abc", got)
+	})
+
+	// WA-2145 removed the activity endpoint's cursor. The query builder must
+	// not put one back: the endpoint ignores it, so a `cursor=` on the wire
+	// would read as paging that silently does nothing — the shape this repo's
+	// no-legacy-fallback rule exists to keep out. The message timeline's own
+	// cursor (`rooms show --cursor`) is a different endpoint and stays.
+	t.Run("no cursor reaches the wire, whatever the scope", func(t *testing.T) {
+		for _, scope := range []string{"all", "last_turn"} {
+			q := roomActivityQuery(100, scope)
+			if _, ok := q["cursor"]; ok {
+				t.Fatalf("scope %q: cursor must never be sent", scope)
+			}
 		}
 	})
 }
