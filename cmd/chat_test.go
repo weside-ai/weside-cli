@@ -587,3 +587,61 @@ func TestSendChat_NoBoundSendsNoCancel(t *testing.T) {
 		t.Errorf("a chat without --abort-after must cancel nothing, got %d call(s)", len(calls))
 	}
 }
+
+// TestSendChat_IgnoresTheUserMessageEcho pins the discriminator that makes the
+// whole verb work. The POST path publishes its own room_message_start carrying
+// the persisted user message (a UUID), and the companion's turn publishes a
+// second one without it, under the id the cancel endpoint registered. Adopting
+// the first cost both halves: every delta of the real turn was filtered out as
+// "not our turn", and the cancel named an id the server could not match — which
+// is exactly what production showed before this fix.
+func TestSendChat_IgnoresTheUserMessageEcho(t *testing.T) {
+	prev := chatStream
+	chatStream = true
+	t.Cleanup(func() { chatStream = prev })
+
+	sse := "data: {\"type\":\"connected\"}\n\n" +
+		// The echo: same shape, but it carries user_message and a UUID.
+		"data: {\"type\":\"room_message_start\",\"server_message_id\":\"3f2a-uuid-echo\"," +
+		"\"user_message\":{\"id\":\"3f2a-uuid-echo\",\"role\":\"user\"}}\n\n" +
+		"data: {\"type\":\"room_message_complete\",\"server_message_id\":\"3f2a-uuid-echo\"," +
+		"\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}\n\n" +
+		// The real turn: no user_message, the registered token id.
+		"data: {\"type\":\"room_message_start\",\"server_message_id\":\"tok-real-turn\"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"tok-real-turn\",\"delta\":\"one \"}\n\n" +
+		"data: {\"type\":\"room_message_delta\",\"server_message_id\":\"tok-real-turn\",\"delta\":\"two \"}\n\n"
+	var calls []cancelCall
+	srv := hangingChatServerWithCancel(t, sse, &calls, true)
+
+	// Its own deadline, because the failure mode is a HANG, not a wrong value:
+	// adopting the echo filters every delta of the real turn, the delta bound
+	// never fires, and the hanging server holds the connection open forever.
+	// Without this the negative control blocks the whole suite instead of
+	// reporting the defect — measured.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+
+	client := api.NewClient(srv.URL, "token")
+	var out string
+	_ = captureStderr(t, func() {
+		out = captureStdout(t, func() error {
+			err := sendChat(ctx, client, 1, "hi", abortBound{deltas: 1})
+			if err != nil && ctx.Err() != nil {
+				t.Errorf("the run never reached its delta bound — the echo was adopted " +
+					"and the real turn's deltas were filtered out")
+				return nil
+			}
+			return err
+		})
+	})
+
+	if !strings.Contains(out, "one ") {
+		t.Errorf("the real turn's deltas were filtered out — the echo was adopted: %q", out)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one cancel, got %d", len(calls))
+	}
+	if got := calls[0].body["server_message_id"]; got != "tok-real-turn" {
+		t.Errorf("the cancel must name the TURN, not the user-message echo, got %v", got)
+	}
+}

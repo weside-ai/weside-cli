@@ -316,6 +316,19 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 				}
 			}
 		case "room_message_start":
+			// A start carrying `user_message` is the echo of OUR OWN send
+			// (rooms.py:2823 publishes it with the persisted user message's
+			// UUID, immediately followed by its own complete). The companion's
+			// turn publishes its start WITHOUT that field, under the id
+			// CompletionCoordination actually registered — a
+			// secrets.token_urlsafe, not a UUID. Adopting the echo cost both
+			// halves of this verb: every delta of the real turn was then
+			// filtered out as "not our turn", and the cancel named an id the
+			// endpoint could not match. The mobile reducer drops the echo the
+			// same way (timelineState.ts:1025).
+			if _, isEcho := event["user_message"]; isEcho && event["user_message"] != nil {
+				continue
+			}
 			// Capture our turn's correlation ID — the first start after we
 			// sent that isn't a pre-existing active turn.
 			if sent && smid != "" && !preActive[smid] && turnID == "" {
