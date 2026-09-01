@@ -184,20 +184,16 @@ var roomsShowCmd = &cobra.Command{
 }
 
 var (
-	roomsActivityCursor string
-	roomsActivityLimit  int
-	roomsActivityScope  string
+	roomsActivityLimit int
+	roomsActivityScope string
 )
 
 // roomActivityQuery builds the activity request's query string. Extracted so a
 // flag reaching the wire is a test rather than a claim — a --scope that never
 // arrives looks exactly like a --scope the server ignores.
-func roomActivityQuery(limit int, cursor, scope string) url.Values {
+func roomActivityQuery(limit int, scope string) url.Values {
 	q := url.Values{}
 	q.Set("limit", strconv.Itoa(limit))
-	if cursor != "" {
-		q.Set("cursor", cursor)
-	}
 	// "all" is the server's default; sending it would only add noise.
 	if scope != "" && scope != "all" {
 		q.Set("scope", scope)
@@ -210,14 +206,17 @@ var roomsActivityCmd = &cobra.Command{
 	Short: "Show what happened in a room — tools, notes, memories",
 	Long: `Read the room's durable activity feed (WA-1784).
 
-One source, one cursor: every event is a tool-audit row, so a memory save and a
-note write appear here as what they are rather than as three merged feeds. The
-feed is scoped to your own companions' activity — a foreign companion's
-arguments and output are never returned.
+One source: every event is a tool-audit row, so a memory save and a note write
+appear here as what they are rather than as three merged feeds. The feed is
+scoped to your own companions' activity — a foreign companion's arguments and
+output are never returned.
+
+This feed is a newest-first slice, never a page. WA-2145 removed the cursor
+along with the app's Verlauf screen, which was its only pager; --limit is the
+whole surface, and the server caps it at 100.
 
 --scope last_turn narrows it to the newest turn of each of your companions,
-which is what the in-chat toolbox shows by default. That view answers with
-whole turns rather than a page, so it carries no cursor.`,
+which is what the in-chat toolbox shows.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClientV2()
@@ -225,11 +224,7 @@ whole turns rather than a page, so it carries no cursor.`,
 			return err
 		}
 
-		cursor := ""
-		if cmd.Flags().Changed("cursor") {
-			cursor = roomsActivityCursor
-		}
-		q := roomActivityQuery(roomsActivityLimit, cursor, roomsActivityScope)
+		q := roomActivityQuery(roomsActivityLimit, roomsActivityScope)
 
 		var result map[string]any
 		path := "/rooms/" + args[0] + "/activity?" + q.Encode()
@@ -269,9 +264,6 @@ whole turns rather than a page, so it carries no cursor.`,
 			})
 		}
 		ui.PrintTable([]string{"When", "Kind", "Tool", "Outcome", "Who"}, rows)
-		if next, _ := result["next_cursor"].(string); next != "" {
-			fmt.Printf("(older: --cursor %s)\n", next)
-		}
 		return nil
 	},
 }
@@ -324,7 +316,6 @@ func init() {
 	roomsCmd.AddCommand(roomsShowCmd)
 	roomsCmd.AddCommand(newRoomsMuteCommand(true))
 	roomsCmd.AddCommand(newRoomsMuteCommand(false))
-	roomsActivityCmd.Flags().StringVar(&roomsActivityCursor, "cursor", "", "keyset cursor from a previous page")
 	roomsActivityCmd.Flags().IntVar(&roomsActivityLimit, "limit", 50, "maximum events to return")
 	roomsActivityCmd.Flags().StringVar(&roomsActivityScope, "scope", "all", "all | last_turn (newest turn per own companion)")
 	roomsCmd.AddCommand(roomsActivityCmd)
