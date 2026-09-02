@@ -24,6 +24,8 @@ var (
 	notesWriteMessage string
 
 	notesDeleteRecursive bool
+
+	notesRecentSinceLastLook bool
 )
 
 // --- notes -----------------------------------------------------------------
@@ -137,6 +139,165 @@ var notesSearchCmd = &cobra.Command{
 				truncate(fmt.Sprintf("%v", n["title"]), 25),
 				truncate(fmt.Sprintf("%v", n["snippet"]), 40),
 				fmt.Sprintf("%.2f", n["score"]),
+			})
+		}
+		ui.PrintTable(headers, rows)
+		return nil
+	},
+}
+
+var notesRecentCmd = &cobra.Command{
+	Use:   "recent",
+	Short: "Show vault commits — any path, any author",
+	Long: `Show recent commits to the notes vault: company bash, notes_write,
+the app's Contents API, or an Obsidian push all land here alike. Each row
+carries the commit message as title, the author, committed_at, the path,
+and is_new — true until you look (POST /notes/last-look flips it to false
+for every row it covers).
+
+--since-last-look narrows the server-side query to rows still marked
+is_new instead of listing everything and filtering client-side.
+
+Example:
+  weside notes recent --since-last-look --json`,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		path := "/notes/recent"
+		if notesRecentSinceLastLook {
+			q := url.Values{}
+			q.Set("since_last_look", "true")
+			path += "?" + q.Encode()
+		}
+		var result map[string]any
+		if err := client.Get(context.Background(), path, &result); err != nil {
+			return fmt.Errorf("reading recent notes: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		items, _ := result["items"].([]any)
+		headers := []string{"TITLE", "AUTHOR", "COMMITTED", "PATH", "NEW"}
+		var rows [][]string
+		for _, item := range items {
+			n, _ := item.(map[string]any)
+			isNew := "no"
+			if b, _ := n["is_new"].(bool); b {
+				isNew = "yes"
+			}
+			rows = append(rows, []string{
+				truncate(fmt.Sprintf("%v", n["title"]), 40),
+				fmt.Sprintf("%v", n["author"]),
+				fmt.Sprintf("%v", n["committed_at"]),
+				truncate(fmt.Sprintf("%v", n["path"]), 30),
+				isNew,
+			})
+		}
+		ui.PrintTable(headers, rows)
+		return nil
+	},
+}
+
+// --- notes working-set ------------------------------------------------------
+
+var notesWorkingSetCmd = &cobra.Command{
+	Use:   "working-set",
+	Short: "Manage the durable working set (per user, max 3 entries)",
+}
+
+var notesWorkingSetAddCmd = &cobra.Command{
+	Use:   "add <path>",
+	Short: "Add a note or file to the working set",
+	Long: `Add a vault or storage path to the per-user working set — no
+excerpt, no companion scoping, paths only.
+
+The set caps at 3 entries; a fourth add is refused with a 409 that names
+the three current members rather than silently evicting one.
+
+Example:
+  weside notes working-set add vertrag-final.pdf`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		body := map[string]any{"path": args[0]}
+		var result map[string]any
+		if err := client.Post(context.Background(), "/notes/working-set", body, &result); err != nil {
+			return fmt.Errorf("adding %s to the working set: %w", args[0], err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Added %v to the working set.", args[0])
+		return nil
+	},
+}
+
+var notesWorkingSetRemoveCmd = &cobra.Command{
+	Use:   "remove <path>",
+	Short: "Remove a note or file from the working set",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		q := url.Values{}
+		q.Set("path", args[0])
+		if err := client.Delete(context.Background(), "/notes/working-set?"+q.Encode(), nil); err != nil {
+			return fmt.Errorf("removing %s from the working set: %w", args[0], err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(map[string]any{"removed": true, "path": args[0]})
+			return nil
+		}
+		ui.PrintSuccess("Removed %v from the working set.", args[0])
+		return nil
+	},
+}
+
+var notesWorkingSetListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List the working set",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		var result map[string]any
+		if err := client.Get(context.Background(), "/notes/working-set", &result); err != nil {
+			return fmt.Errorf("listing the working set: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		items, _ := result["items"].([]any)
+		headers := []string{"PATH", "KIND", "ADDED BY", "ADDED AT"}
+		var rows [][]string
+		for _, item := range items {
+			n, _ := item.(map[string]any)
+			rows = append(rows, []string{
+				truncate(fmt.Sprintf("%v", n["path"]), 40),
+				fmt.Sprintf("%v", n["kind"]),
+				fmt.Sprintf("%v", n["added_by"]),
+				fmt.Sprintf("%v", n["added_at"]),
 			})
 		}
 		ui.PrintTable(headers, rows)
@@ -429,11 +590,19 @@ func init() {
 
 	notesDeleteCmd.Flags().BoolVar(&notesDeleteRecursive, "recursive", false, "delete a folder and everything under it")
 
+	notesRecentCmd.Flags().BoolVar(&notesRecentSinceLastLook, "since-last-look", false, "only rows still marked is_new")
+
+	notesWorkingSetCmd.AddCommand(notesWorkingSetAddCmd)
+	notesWorkingSetCmd.AddCommand(notesWorkingSetRemoveCmd)
+	notesWorkingSetCmd.AddCommand(notesWorkingSetListCmd)
+
 	notesCmd.AddCommand(notesListCmd)
 	notesCmd.AddCommand(notesWriteCmd)
 	notesCmd.AddCommand(notesGetCmd)
 	notesCmd.AddCommand(notesSearchCmd)
 	notesCmd.AddCommand(notesDeleteCmd)
+	notesCmd.AddCommand(notesRecentCmd)
+	notesCmd.AddCommand(notesWorkingSetCmd)
 	notesRepoCmd.AddCommand(notesRepoStatusCmd)
 	notesRepoCmd.AddCommand(notesRepoRepairCmd)
 	notesPatCmd.AddCommand(notesPatListCmd)
