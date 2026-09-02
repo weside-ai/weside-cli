@@ -13,6 +13,8 @@ import (
 
 var (
 	filesLimit      int
+	filesRecursive  bool
+	filesSort       string
 	filesUploadName string
 )
 
@@ -37,6 +39,12 @@ var filesTreeCmd = &cobra.Command{
 		q := url.Values{}
 		q.Set("path", path)
 		q.Set("limit", fmt.Sprintf("%d", filesLimit))
+		if filesRecursive {
+			q.Set("recursive", "true")
+		}
+		if filesSort != "" {
+			q.Set("sort", filesSort)
+		}
 		var result map[string]any
 		if err := client.Get(context.Background(), "/files/tree?"+q.Encode(), &result); err != nil {
 			return fmt.Errorf("listing files: %w", err)
@@ -48,19 +56,55 @@ var filesTreeCmd = &cobra.Command{
 		}
 
 		entries, _ := result["entries"].([]any)
-		headers := []string{"TYPE", "NAME", "SIZE", "CHILDREN"}
+		headers := []string{"TYPE", "NAME", "SIZE", "CHILDREN", "EXPIRES"}
 		var rows [][]string
 		for _, item := range entries {
 			e, _ := item.(map[string]any)
+			expires := "-"
+			if v, ok := e["expires_at"]; ok && v != nil {
+				expires = fmt.Sprintf("%v", v)
+			}
 			rows = append(rows, []string{
 				fmt.Sprintf("%v", e["type"]),
 				truncate(fmt.Sprintf("%v", e["name"]), 50),
 				fmt.Sprintf("%v", e["size_bytes"]),
 				fmt.Sprintf("%v", e["children_count"]),
+				expires,
 			})
 		}
 		ui.PrintTable(headers, rows)
 		fmt.Printf("\n%v total\n", result["total_count"])
+		return nil
+	},
+}
+
+var filesKeepCmd = &cobra.Command{
+	Use:   "keep <path>",
+	Short: "Exempt a temp/ file from retention cleanup",
+	Long: `Mark a file so the retention job (temp_cleanup.py) skips it —
+the same predicate that decides a row's expires_at also decides its
+deletion, so keep changes that decision rather than moving the file.
+
+Example:
+  weside files keep temp/regal-entwurf.png`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		body := map[string]any{"path": args[0]}
+		var result map[string]any
+		if err := client.Post(context.Background(), "/files/keep", body, &result); err != nil {
+			return fmt.Errorf("keeping %s: %w", args[0], err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("%v marked to keep — retention will skip it.", args[0])
 		return nil
 	},
 }
@@ -171,11 +215,14 @@ Examples:
 
 func init() {
 	filesTreeCmd.Flags().IntVar(&filesLimit, "limit", 500, "max entries (1-2000)")
+	filesTreeCmd.Flags().BoolVar(&filesRecursive, "recursive", false, "descend into subdirectories")
+	filesTreeCmd.Flags().StringVar(&filesSort, "sort", "", "recent|name|size (default: server's own default)")
 	filesUploadCmd.Flags().StringVar(&filesUploadName, "name", "", "stored filename (default: local basename)")
 
 	filesCmd.AddCommand(filesTreeCmd)
 	filesCmd.AddCommand(filesUploadCmd)
 	filesCmd.AddCommand(filesQuotaCmd)
 	filesCmd.AddCommand(filesDeleteCmd)
+	filesCmd.AddCommand(filesKeepCmd)
 	rootCmd.AddCommand(filesCmd)
 }
