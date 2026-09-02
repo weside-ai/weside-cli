@@ -413,10 +413,17 @@ var roomsRenameCmd = &cobra.Command{
 }
 
 var roomsGroupCmd = &cobra.Command{
-	Use:   "group --companions 1,2 [--title T]",
-	Short: "Create a group room seated with your companions",
+	Use:   "group [--companions 1,2] [--title T]",
+	Short: "Create a group room, optionally seated with your companions",
+	Long: `Create a group room.
+
+--companions is optional: a room for humans only is created by omitting it
+(WA-2158). The server has never had a lower bound — POST /api/v2/rooms/group
+with an empty companion_ids answers 201 — and this is the state the empty
+timeline's invite action and the "no companion yet" join preview describe, so
+verifying either needs this verb to reach it.`,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		ids, err := parseIntCSV(roomsGroupCompanions)
+		ids, err := parseOptionalIntCSV(roomsGroupCompanions)
 		if err != nil {
 			return err
 		}
@@ -425,6 +432,11 @@ var roomsGroupCmd = &cobra.Command{
 			return err
 		}
 
+		// Always a list, never null: the schema's default_factory would cover
+		// an omitted key, but sending the empty list says what was meant.
+		if ids == nil {
+			ids = []int{}
+		}
 		body := map[string]any{"companion_ids": ids}
 		if roomsGroupTitle != "" {
 			body["title"] = roomsGroupTitle
@@ -465,6 +477,16 @@ var roomsDmCmd = &cobra.Command{
 		ui.PrintSuccess("DM room with companion %s (ID: %v).", args[0], result["id"])
 		return nil
 	},
+}
+
+// parseOptionalIntCSV is parseIntCSV with the empty string meaning "none",
+// not "you forgot an argument" — a group room may hold no companion at all
+// (WA-2158). A malformed non-empty value is still an error.
+func parseOptionalIntCSV(s string) ([]int, error) {
+	if strings.TrimSpace(s) == "" {
+		return []int{}, nil
+	}
+	return parseIntCSV(s)
 }
 
 // parseIntCSV turns "1,2,3" into []int.
@@ -888,9 +910,8 @@ func init() {
 	roomsRegenerateCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
 	roomsContextBreakCmd.Flags().BoolVar(&roomsConfirm, "confirm", false, "confirm the destructive action")
 	roomsRenameCmd.Flags().BoolVar(&roomsRenameClear, "clear", false, "clear the title instead of setting it")
-	roomsGroupCmd.Flags().StringVar(&roomsGroupCompanions, "companions", "", "comma-separated companion ids (required)")
+	roomsGroupCmd.Flags().StringVar(&roomsGroupCompanions, "companions", "", "comma-separated companion ids (optional; omit for a room with no companion)")
 	roomsGroupCmd.Flags().StringVar(&roomsGroupTitle, "title", "", "optional room title")
-	_ = roomsGroupCmd.MarkFlagRequired("companions")
 	roomsEventsCmd.Flags().StringVar(&eventsSince, "since", "", "resume from an SSE cursor")
 	roomsEventsCmd.Flags().BoolVar(&eventsRaw, "raw", false, "one line per frame: <type> <cursor> <json>")
 	roomsEventsCmd.Flags().BoolVar(&eventsNDJSON, "ndjson", false, "one JSON object per frame: {\"event\":...,\"id\":...,\"data\":{...}} (mutually exclusive with --raw)")
