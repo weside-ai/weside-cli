@@ -40,6 +40,43 @@ func TestParseIntCSV(t *testing.T) {
 	}
 }
 
+// WA-2158: a group room may hold no companion at all, so the empty string is
+// "none" here rather than the error `parseIntCSV` answers. The malformed case
+// is asserted alongside as the positive control — without it, "no error on
+// empty" would also pass against a parser that stopped validating.
+func TestParseOptionalIntCSV(t *testing.T) {
+	got, err := parseOptionalIntCSV("")
+	if err != nil {
+		t.Fatalf("parseOptionalIntCSV(empty) err=%v, want nil", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("parseOptionalIntCSV(empty) = %v, want an empty non-nil slice", got)
+	}
+
+	if got, err := parseOptionalIntCSV("1,2"); err != nil || !equalInts(got, []int{1, 2}) {
+		t.Errorf("parseOptionalIntCSV(\"1,2\") = %v, %v", got, err)
+	}
+
+	if _, err := parseOptionalIntCSV("1,x"); err == nil {
+		t.Error("parseOptionalIntCSV(\"1,x\") = nil error, want a parse error")
+	}
+}
+
+// The flag must stay registered as NOT required — calling RunE directly bypasses
+// cobra's flag handling, so a `MarkFlagRequired` left in place would pass every
+// RunE-level test while making the companion-less room unreachable from a
+// terminal (the same class `TestRoomsDestructiveCommandsRegisterConfirm` pins
+// from the other side).
+func TestRoomsGroupCompanionsIsOptional(t *testing.T) {
+	flag := roomsGroupCmd.Flags().Lookup("companions")
+	if flag == nil {
+		t.Fatal("--companions is not a registered flag")
+	}
+	if flag.Annotations[cobra.BashCompOneRequiredFlag] != nil {
+		t.Error("--companions is marked required; a group room may hold no companion (WA-2158)")
+	}
+}
+
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
