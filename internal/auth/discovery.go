@@ -55,7 +55,13 @@ type ResolveResult struct {
 }
 
 const (
-	defaultSupabaseURL     = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
+	defaultSupabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
+	// defaultSupabaseAnonKey is the project's public anon key (JWT claim
+	// `role: anon`). Public by spec — Supabase ships it in every web and mobile
+	// client; access is bounded by RLS, not by the key staying secret. GitHub
+	// secret scanning flags it as a "password"; that is a false positive, and
+	// the value has to stay hardcoded because it is the last fallback in the
+	// Resolve() chain when /.well-known/weside-auth is unreachable.
 	defaultSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxeWtyd3BtaGpxamhwc25qeGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5ODU3NDksImV4cCI6MjA4NTU2MTc0OX0.ADx_HD7O-xNMx-j4MDrhaJbRO71R-hJO6yTcf5wFWUA"
 	defaultCallbackPort    = 18520
 	defaultMCPURL          = "https://api.weside.ai/mcp/"
