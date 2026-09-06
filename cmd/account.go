@@ -56,7 +56,7 @@ var meUsageCmd = &cobra.Command{
 		}
 
 		if usageDaily {
-			fmt.Printf("Month: %v\n\n", result["month"])
+			ui.Printf("Month: %v\n\n", result["month"])
 			days, _ := result["days"].([]any)
 			headers := []string{"DATE", "CREDITS"}
 			var rows [][]string
@@ -68,18 +68,18 @@ var meUsageCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("Month: %v   Total credits: %v\n", result["month"], result["total_credits"])
-		fmt.Printf("Actions: %v/%v (remaining %v, purchased %v)\n",
+		ui.Printf("Month: %v   Total credits: %v\n", result["month"], result["total_credits"])
+		ui.Printf("Actions: %v/%v (remaining %v, purchased %v)\n",
 			result["actions_used_this_month"], result["actions_per_month"], result["actions_remaining"], result["purchased_actions"])
 		if ps, ok := result["per_source"].(map[string]any); ok {
-			fmt.Printf("By source: chat=%v voice=%v embeddings=%v tooling=%v\n",
+			ui.Printf("By source: chat=%v voice=%v embeddings=%v tooling=%v\n",
 				ps["chat"], ps["voice"], ps["embeddings"], ps["tooling"])
 		}
 		if comps, ok := result["per_companion"].([]any); ok {
-			fmt.Println("\nBy companion:")
+			ui.Println("\nBy companion:")
 			for _, item := range comps {
 				c, _ := item.(map[string]any)
-				fmt.Printf("  %v (%v): %v\n", c["companion_name"], c["companion_id"], c["credits"])
+				ui.Printf("  %v (%v): %v\n", c["companion_name"], c["companion_id"], c["credits"])
 			}
 		}
 		return nil
@@ -112,7 +112,7 @@ var userConfigGetCmd = &cobra.Command{
 				ui.PrintJSON(result)
 				return nil
 			}
-			fmt.Printf("%v\n", result["value"])
+			ui.Printf("%v\n", result["value"])
 			return nil
 		}
 
@@ -259,19 +259,23 @@ var sandboxSecretsPresetsCmd = &cobra.Command{
 }
 
 var sandboxSecretsPutCmd = &cobra.Command{
-	Use:   "put <slug> --value V",
+	Use:   "put <slug> (--value V | --value-stdin)",
 	Short: "Create or update a sandbox secret",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if secretValue == "" {
-			return fmt.Errorf("--value is required")
+		value, _, err := secretInput(cmd, "value-stdin", secretValue, cmd.Flags().Changed("value"))
+		if err != nil {
+			return err
+		}
+		if value == "" {
+			return fmt.Errorf("--value or --value-stdin is required")
 		}
 		client, err := newAuthenticatedClient()
 		if err != nil {
 			return err
 		}
 
-		body := map[string]any{"slug": args[0], "value": secretValue}
+		body := map[string]any{"slug": args[0], "value": value}
 		if cmd.Flags().Changed("label") {
 			body["label"] = secretLabel
 		}
@@ -318,6 +322,7 @@ var sandboxSecretsDeleteCmd = &cobra.Command{
 }
 
 func init() {
+	addSecretStdinFlag(sandboxSecretsPutCmd, "value-stdin")
 	meUsageCmd.Flags().StringVar(&usageMonth, "month", "", "YYYY-MM")
 	meUsageCmd.Flags().BoolVar(&usageDaily, "daily", false, "daily breakdown")
 	sandboxSecretsPutCmd.Flags().StringVar(&secretValue, "value", "", "secret value (required)")

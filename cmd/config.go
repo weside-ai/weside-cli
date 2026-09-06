@@ -29,8 +29,8 @@ var configShowCmd = &cobra.Command{
 		}
 
 		if len(settings) == 0 {
-			fmt.Println("No configuration set.")
-			fmt.Println("Config file: ~/.weside/config.yaml")
+			ui.Println("No configuration set.")
+			ui.Println("Config file: ~/.weside/config.yaml")
 			return nil
 		}
 
@@ -83,11 +83,11 @@ the new values on the next 'weside auth login' without needing a CLI release.`,
 			ui.PrintJSON(cfg)
 			return nil
 		}
-		fmt.Printf("auth-config refreshed (fetched_at=%s)\n", cfg.FetchedAt)
-		fmt.Printf("  supabase_url:      %s\n", cfg.SupabaseURL)
-		fmt.Printf("  supabase_anon_key: %s\n", truncateForDisplay(cfg.SupabaseAnonKey))
-		fmt.Printf("  mcp_url:           %s\n", cfg.MCPURL)
-		fmt.Printf("  callback_port:     %d\n", cfg.CallbackPort)
+		ui.Printf("auth-config refreshed (fetched_at=%s)\n", cfg.FetchedAt)
+		ui.Printf("  supabase_url:      %s\n", cfg.SupabaseURL)
+		ui.Printf("  supabase_anon_key: %s\n", truncateForDisplay(cfg.SupabaseAnonKey))
+		ui.Printf("  mcp_url:           %s\n", cfg.MCPURL)
+		ui.Printf("  callback_port:     %d\n", cfg.CallbackPort)
 		return nil
 	},
 }

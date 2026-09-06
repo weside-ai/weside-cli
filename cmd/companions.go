@@ -60,7 +60,7 @@ var companionsListCmd = &cobra.Command{
 		}
 
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%v companion(s)\n", total)
+		ui.Printf("\n%v companion(s)\n", total)
 		return nil
 	},
 }
@@ -90,35 +90,35 @@ var companionsShowCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("ID:                %v\n", companion["id"])
-		fmt.Printf("Name:              %v\n", companion["name"])
-		fmt.Printf("Personality:       %v\n", companion["personality"])
-		fmt.Printf("Published:         %v\n", companion["is_published"])
-		fmt.Printf("Category:          %v\n", companion["category"])
+		ui.Printf("ID:                %v\n", companion["id"])
+		ui.Printf("Name:              %v\n", companion["name"])
+		ui.Printf("Personality:       %v\n", companion["personality"])
+		ui.Printf("Published:         %v\n", companion["is_published"])
+		ui.Printf("Category:          %v\n", companion["category"])
 
 		if tags, ok := companion["tags"].([]any); ok && len(tags) > 0 {
 			tagStrs := make([]string, len(tags))
 			for i, t := range tags {
 				tagStrs[i] = fmt.Sprintf("%v", t)
 			}
-			fmt.Printf("Tags:              %s\n", strings.Join(tagStrs, ", "))
+			ui.Printf("Tags:              %s\n", strings.Join(tagStrs, ", "))
 		} else {
-			fmt.Printf("Tags:              \n")
+			ui.Printf("Tags:              \n")
 		}
 
-		fmt.Printf("Short Description: %v\n", companion["short_description"])
-		fmt.Printf("Avatar URL:        %v\n", companion["avatar_url"])
-		fmt.Printf("Banner URL:        %v\n", companion["banner_url"])
+		ui.Printf("Short Description: %v\n", companion["short_description"])
+		ui.Printf("Avatar URL:        %v\n", companion["avatar_url"])
+		ui.Printf("Banner URL:        %v\n", companion["banner_url"])
 
 		if created, ok := companion["created_at"]; ok {
-			fmt.Printf("Created:           %v\n", created)
+			ui.Printf("Created:           %v\n", created)
 		}
 		if updated, ok := companion["updated_at"]; ok {
-			fmt.Printf("Updated:           %v\n", updated)
+			ui.Printf("Updated:           %v\n", updated)
 		}
 
 		if sp, ok := companion["system_prompt"]; ok && sp != nil && fmt.Sprintf("%v", sp) != "" {
-			fmt.Printf("\nSystem Prompt:\n%s\n", fmt.Sprintf("%v", sp))
+			ui.Printf("\nSystem Prompt:\n%s\n", fmt.Sprintf("%v", sp))
 		}
 
 		return nil
@@ -465,13 +465,13 @@ var companionsIdentityCmd = &cobra.Command{
 		}
 		if jsonErr := json.Unmarshal(result, &callResult); jsonErr == nil && len(callResult.Content) > 0 {
 			for _, c := range callResult.Content {
-				fmt.Println(c.Text)
+				ui.Println(c.Text)
 			}
 			return nil
 		}
 
 		// Fallback: print raw
-		fmt.Println(string(result))
+		ui.Println(string(result))
 		return nil
 	},
 }

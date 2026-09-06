@@ -117,7 +117,7 @@ weside chat --stream -m "Tell me a story"
 | `weside provider show` | Show current provider configuration |
 | `weside provider presets` | List available regional presets |
 | `weside provider set <id>` | Set a regional or WESIDE provider preset (numeric ID) |
-| `weside provider byok <provider> <key>` | Bring Your Own Key |
+| `weside provider byok <provider> [key] [--key-stdin]` | Bring Your Own Key |
 
 ### Tools (MCP)
 
@@ -243,6 +243,20 @@ Goals represent what a Companion is working towards. They can be managed by the 
 ### Provider & Data Residency
 
 Controls which LLM provider and region your Companion uses. Presets group providers by geographic region (EU, US, Asia). BYOK (Bring Your Own Key) allows using your own API keys.
+
+To keep secrets out of shell history and process arguments, pipe them from a
+password manager or redirect a protected file:
+
+```bash
+weside provider byok openai --key-stdin < /path/to/protected-key
+weside provider byok-test --provider openai --model MODEL --key-stdin < /path/to/protected-key
+weside provider byok-discover --provider openai --key-stdin < /path/to/protected-key
+weside sandbox-secrets put api-key --value-stdin < /path/to/protected-key
+```
+
+Stdin input removes one final LF/CRLF and preserves other whitespace. Existing key
+arguments and flags still work. Omitting both `--key` and `--key-stdin` on
+`byok-test`/`byok-discover` continues to reuse the stored key.
 
 ### Tools
 

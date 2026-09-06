@@ -73,7 +73,7 @@ var roomsListCmd = &cobra.Command{
 		}
 
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%v room(s)\n", total)
+		ui.Printf("\n%v room(s)\n", total)
 		return nil
 	},
 }
@@ -167,17 +167,17 @@ var roomsShowCmd = &cobra.Command{
 				for _, block := range content {
 					if b, ok := block.(map[string]any); ok {
 						if text, ok := b["text"].(string); ok {
-							fmt.Printf("[%s] %s\n\n", prefix, text)
+							ui.Printf("[%s] %s\n\n", prefix, text)
 						}
 					}
 				}
 			}
 		}
 		if next, _ := result["next_cursor"].(string); next != "" {
-			fmt.Printf("(older: --cursor %s)\n", next)
+			ui.Printf("(older: --cursor %s)\n", next)
 		}
 		if prev, _ := result["prev_cursor"].(string); prev != "" {
-			fmt.Printf("(newer: --after %s)\n", prev)
+			ui.Printf("(newer: --after %s)\n", prev)
 		}
 		return nil
 	},
@@ -239,7 +239,7 @@ which is what the in-chat toolbox shows.`,
 
 		events, _ := result["events"].([]any)
 		if len(events) == 0 {
-			fmt.Println("No activity yet.")
+			ui.Println("No activity yet.")
 			return nil
 		}
 		rows := make([][]string, 0, len(events))

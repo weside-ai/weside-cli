@@ -34,14 +34,14 @@ var providerShowCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("Type:   %v\n", result["type"])
-		fmt.Printf("Preset: %v\n", result["preset_display_name"])
-		fmt.Printf("Model:  %v\n", result["model_name"])
+		ui.Printf("Type:   %v\n", result["type"])
+		ui.Printf("Preset: %v\n", result["preset_display_name"])
+		ui.Printf("Model:  %v\n", result["model_name"])
 		if region := result["region"]; region != nil {
-			fmt.Printf("Region: %v\n", region)
+			ui.Printf("Region: %v\n", region)
 		}
 		if result["has_api_key"] == true {
-			fmt.Printf("BYOK:   yes\n")
+			ui.Printf("BYOK:   yes\n")
 		}
 		return nil
 	},
@@ -71,7 +71,7 @@ var providerPresetsCmd = &cobra.Command{
 		for _, gItem := range groups {
 			group, _ := gItem.(map[string]any)
 			region := fmt.Sprintf("%v", group["region"])
-			fmt.Printf("\n%s:\n", region)
+			ui.Printf("\n%s:\n", region)
 
 			presets, _ := group["presets"].([]any)
 			headers := []string{"ID", "TIER", "NAME", "DESCRIPTION"}
@@ -160,10 +160,21 @@ func buildSetRequestBody(presetID int, groups []any) (map[string]any, error) {
 }
 
 var providerByokCmd = &cobra.Command{
-	Use:   "byok <provider> <key>",
+	Use:   "byok <provider> [key] [--key-stdin]",
 	Short: "Bring Your Own Key",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	Args:  cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		key := ""
+		if len(args) == 2 {
+			key = args[1]
+		}
+		key, supplied, err := secretInput(cmd, "key-stdin", key, len(args) == 2)
+		if err != nil {
+			return err
+		}
+		if !supplied {
+			return fmt.Errorf("a key argument or --key-stdin is required")
+		}
 		client, err := newAuthenticatedClient()
 		if err != nil {
 			return err
@@ -172,7 +183,7 @@ var providerByokCmd = &cobra.Command{
 		body := map[string]any{
 			"type":     "byok",
 			"provider": args[0],
-			"api_key":  args[1],
+			"api_key":  key,
 		}
 		if err := client.Put(context.Background(), "/data-residency/", body, nil); err != nil {
 			return fmt.Errorf("setting BYOK: %w", err)
@@ -184,6 +195,7 @@ var providerByokCmd = &cobra.Command{
 }
 
 func init() {
+	addSecretStdinFlag(providerByokCmd, "key-stdin")
 	providerCmd.AddCommand(providerShowCmd)
 	providerCmd.AddCommand(providerPresetsCmd)
 	providerCmd.AddCommand(providerSetCmd)

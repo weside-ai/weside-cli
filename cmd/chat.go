@@ -346,11 +346,11 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 				continue
 			}
 			if delta, ok := event["delta"].(string); ok && delta != "" {
-				fmt.Print(delta)
+				ui.Print(delta)
 				streamed = true
 				deltas++
 				if bound.deltas > 0 && deltas >= bound.deltas {
-					fmt.Println()
+					ui.Println()
 					aborted = true
 					if err := cancelTurn(&turnID); err != nil {
 						return err
@@ -374,12 +374,12 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 			}
 			if chatStream {
 				if !streamed && fallback != "" {
-					fmt.Print(fallback)
+					ui.Print(fallback)
 				}
 			} else {
 				fmt.Print(ui.RenderMarkdown(fallback))
 			}
-			fmt.Println()
+			ui.Println()
 			return nil
 		case "room_turn_ended":
 			// Turn ended without a complete — cancelled, failed, timed_out.
@@ -414,7 +414,7 @@ func sendChat(ctx context.Context, client *api.Client, roomID int, content strin
 	// reported as a transport failure.
 	if aborted {
 		if streamed {
-			fmt.Println()
+			ui.Println()
 		}
 		if cancelErr != nil {
 			return cancelErr
@@ -448,7 +448,7 @@ func reportAbort(roomID int, turnID string, deltas int) error {
 	if turnID == "" {
 		turnID = "(no room_message_start seen — the turn may not have started)"
 	}
-	fmt.Fprintf(
+	_, _ = ui.Fprintf(
 		os.Stderr,
 		"aborted after %d delta(s): room_id=%d server_message_id=%s\n"+
 			"the server-side turn was cancelled; look it up in usage_ledger (WA-2125)\n",
@@ -514,7 +514,7 @@ func cancelRoomTurn(ctx context.Context, client *api.Client, roomID int, turnID 
 			roomID, turnID,
 		)
 	}
-	fmt.Fprintf(
+	_, _ = ui.Fprintf(
 		os.Stderr,
 		"note: the cancel matched no turn under server_message_id=%s and succeeded "+
 			"without it — the streamed id is not the registered one (WA-2140)\n",

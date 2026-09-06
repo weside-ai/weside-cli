@@ -110,7 +110,7 @@ still answerable, and whether pressing Zulassen actually consumed it.`,
 			return nil
 		}
 		if len(found) == 0 {
-			fmt.Printf("No Gefallen ask in the newest %d messages.\n", roomsConfirmationsLimit)
+			ui.Printf("No Gefallen ask in the newest %d messages.\n", roomsConfirmationsLimit)
 			return nil
 		}
 		headers := []string{"ID", "STATUS", "WEIGHT", "REMAINING", "TOOL"}

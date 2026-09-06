@@ -106,7 +106,7 @@ var memoriesListCmd = &cobra.Command{
 		}
 
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%d memory/ies\n", len(memories))
+		ui.Printf("\n%d memory/ies\n", len(memories))
 		return nil
 	},
 }
@@ -159,7 +159,7 @@ var memoriesSaveCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
 			for _, c := range callResult.Content {
-				fmt.Println(c.Text)
+				ui.Println(c.Text)
 			}
 			return nil
 		}

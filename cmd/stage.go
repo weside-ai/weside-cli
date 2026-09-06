@@ -60,7 +60,7 @@ var stageListCmd = &cobra.Command{
 
 		items, _ := result["items"].([]any)
 		if len(items) == 0 {
-			fmt.Println("Nothing is kept on the stage yet.")
+			ui.Println("Nothing is kept on the stage yet.")
 			return nil
 		}
 		rows := make([][]string, 0, len(items))
@@ -75,7 +75,7 @@ var stageListCmd = &cobra.Command{
 		}
 		ui.PrintTable([]string{"ID", "Title", "Built by", "When"}, rows)
 		if next, _ := result["next_cursor"].(string); next != "" {
-			fmt.Printf("(older: --cursor %s)\n", next)
+			ui.Printf("(older: --cursor %s)\n", next)
 		}
 		return nil
 	},

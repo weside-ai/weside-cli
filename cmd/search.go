@@ -63,7 +63,7 @@ only way to tell "nothing there" from "it did not run".`,
 				continue
 			}
 			printed = true
-			fmt.Printf("\n%s\n", group.label)
+			ui.Printf("\n%s\n", group.label)
 			rows := make([][]string, 0, len(items))
 			for _, item := range items {
 				hit, _ := item.(map[string]any)
@@ -75,7 +75,7 @@ only way to tell "nothing there" from "it did not run".`,
 			ui.PrintTable([]string{"Title", "Where it matched"}, rows)
 		}
 		if !printed {
-			fmt.Printf("Nothing found for %q.\n", args[0])
+			ui.Printf("Nothing found for %q.\n", args[0])
 		}
 		return nil
 	},

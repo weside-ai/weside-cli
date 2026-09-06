@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
 var (
@@ -20,8 +21,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "weside",
-	Short: "CLI for the weside.ai AI Companion Platform",
+	Use:           "weside",
+	SilenceErrors: true,
+	Short:         "CLI for the weside.ai AI Companion Platform",
 	Long: `weside is a command-line interface for interacting with your AI Companions
 on the weside.ai platform.
 
@@ -32,6 +34,7 @@ and more — all from your terminal.`,
 // Execute runs the root command.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		ui.PrintError("%s", err)
 		os.Exit(1)
 	}
 }

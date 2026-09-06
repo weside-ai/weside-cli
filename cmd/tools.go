@@ -44,7 +44,7 @@ var toolsDiscoverCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(result, &toolsResult); err != nil {
 			// Fallback: print raw
-			fmt.Println(string(result))
+			ui.Println(string(result))
 			return nil
 		}
 
@@ -54,7 +54,7 @@ var toolsDiscoverCmd = &cobra.Command{
 			rows = append(rows, []string{t.Name, truncate(t.Description, 60)})
 		}
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%d tool(s)\n", len(toolsResult.Tools))
+		ui.Printf("\n%d tool(s)\n", len(toolsResult.Tools))
 		return nil
 	},
 }
@@ -91,13 +91,13 @@ var toolsExecCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
 			for _, c := range callResult.Content {
-				fmt.Println(c.Text)
+				ui.Println(c.Text)
 			}
 			return nil
 		}
 
 		// Fallback: print raw JSON
-		fmt.Println(string(result))
+		ui.Println(string(result))
 		return nil
 	},
 }

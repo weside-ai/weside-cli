@@ -172,7 +172,7 @@ var goalsSaveCmd = &cobra.Command{
 		}
 		if err := json.Unmarshal(result, &callResult); err == nil && len(callResult.Content) > 0 {
 			for _, c := range callResult.Content {
-				fmt.Println(c.Text)
+				ui.Println(c.Text)
 			}
 			return nil
 		}

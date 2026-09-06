@@ -60,7 +60,7 @@ var roomsTraceCmd = &cobra.Command{
 
 		messages, _ := result["messages"].([]any)
 		if len(messages) == 0 {
-			fmt.Println("No trace (room has no caller-owned companion checkpoint).")
+			ui.Println("No trace (room has no caller-owned companion checkpoint).")
 			return nil
 		}
 		for _, item := range messages {
@@ -68,13 +68,13 @@ var roomsTraceCmd = &cobra.Command{
 			role := roleLabel(fmt.Sprintf("%v", m["role"]))
 			created := fmt.Sprintf("%v", m["created_at"])
 			msgID, _ := m["message_id"].(string)
-			fmt.Printf("[%s] %s", role, created)
+			ui.Printf("[%s] %s", role, created)
 			if msgID != "" && msgID != "<nil>" {
-				fmt.Printf("  (%s)", msgID)
+				ui.Printf("  (%s)", msgID)
 			}
-			fmt.Println()
+			ui.Println()
 			printTraceItems(m["trace_items"], roomsTraceFull)
-			fmt.Println()
+			ui.Println()
 		}
 		return nil
 	},
@@ -91,25 +91,25 @@ func printTraceItems(raw any, full bool) {
 			name, _ := item["tool_name"].(string)
 			args := prettyJSON(item["tool_args"])
 			output, _ := item["tool_output"].(string)
-			fmt.Printf("  - tool_call %s(%s)", name, args)
+			ui.Printf("  - tool_call %s(%s)", name, args)
 			if output != "" && output != "<nil>" {
 				if full {
-					fmt.Printf(" -> %s", output)
+					ui.Printf(" -> %s", output)
 				} else {
-					fmt.Printf(" -> %s", truncate(output, 200))
+					ui.Printf(" -> %s", truncate(output, 200))
 				}
 			}
-			fmt.Println()
+			ui.Println()
 		case "reminder":
 			category, _ := item["category"].(string)
 			message, _ := item["message"].(string)
 			if category != "" && category != "<nil>" {
-				fmt.Printf("  - reminder [%s]: %s\n", category, message)
+				ui.Printf("  - reminder [%s]: %s\n", category, message)
 			} else {
-				fmt.Printf("  - reminder: %s\n", message)
+				ui.Printf("  - reminder: %s\n", message)
 			}
 		default:
-			fmt.Printf("  - %v\n", item["type"])
+			ui.Printf("  - %v\n", item["type"])
 		}
 	}
 }
@@ -193,18 +193,18 @@ var roomsToolCallCmd = &cobra.Command{
 		}
 
 		if fmt.Sprintf("%v", result["detail_level"]) == "metadata_only" {
-			fmt.Println("metadata only (tool call not visible to you)")
+			ui.Println("metadata only (tool call not visible to you)")
 			return nil
 		}
-		fmt.Printf("Tool:    %s\n", result["tool_name"])
-		fmt.Printf("Args:    %s\n", prettyJSON(result["args"]))
+		ui.Printf("Tool:    %s\n", result["tool_name"])
+		ui.Printf("Args:    %s\n", prettyJSON(result["args"]))
 		out, _ := result["output"].(string)
 		if pending, _ := result["pending"].(bool); pending {
-			fmt.Println("Output:  (still running)")
+			ui.Println("Output:  (still running)")
 		} else if out != "" && out != "<nil>" {
-			fmt.Printf("Output:  %s\n", out)
+			ui.Printf("Output:  %s\n", out)
 		} else {
-			fmt.Println("Output:  (none)")
+			ui.Println("Output:  (none)")
 		}
 		return nil
 	},
@@ -242,7 +242,7 @@ var roomsCancelCmd = &cobra.Command{
 		if cancelled, _ := result["cancelled"].(bool); cancelled {
 			ui.PrintSuccess("Turn cancelled.")
 		} else {
-			fmt.Println("No running turn to cancel.")
+			ui.Println("No running turn to cancel.")
 		}
 		return nil
 	},
@@ -292,7 +292,7 @@ var roomsUndoCmd = &cobra.Command{
 		}
 		ui.PrintSuccess("Undid turn (%d message(s) removed).", len(asSlice(result["removed_message_ids"])))
 		if txt, _ := result["user_message_text"].(string); txt != "" {
-			fmt.Printf("Your message: %s\n", txt)
+			ui.Printf("Your message: %s\n", txt)
 		}
 		return nil
 	},
@@ -344,7 +344,7 @@ var roomsRegenerateCmd = &cobra.Command{
 			return nil
 		}
 		if replayed, _ := result["replayed"].(bool); replayed {
-			fmt.Println("Already regenerated — replayed the first result, nothing deleted, nothing charged.")
+			ui.Println("Already regenerated — replayed the first result, nothing deleted, nothing charged.")
 			return nil
 		}
 		ui.PrintSuccess("Regenerating (%d message(s) removed).", len(asSlice(result["removed_message_ids"])))
@@ -598,8 +598,8 @@ func prettyData(data string) string {
 // closed the stream) or ctx is cancelled (SIGINT — reported, not returned as
 // an error). Under ndjson, heartbeat comments are counted rather than
 // written to out, and a one-line summary (frames, heartbeats, close reason)
-// goes to stderr — the default/raw forms keep their prior stdout contract
-// unchanged and stay silent on stderr. A malformed ndjson data payload, a
+// goes to stderr — default/raw forms keep their layout, escape terminal controls,
+// and stay silent on stderr. A malformed ndjson data payload, a
 // genuine (non-cancellation) read error, or a failed write to out comes
 // back as err — deliberately no retry, so a caller sees a break as a break.
 // The stderr summary is best-effort: a failed write there never masks the
@@ -640,22 +640,22 @@ func streamRoomEvents(ctx context.Context, r io.Reader, out, stderr io.Writer, r
 				return err
 			}
 		case raw:
-			if _, err := fmt.Fprintf(out, "%s %s %s\n", orDash(eventType), orDash(curID), data); err != nil {
+			if _, err := ui.Fprintf(out, "%s %s %s\n", orDash(eventType), orDash(curID), data); err != nil {
 				return err
 			}
 		default:
 			if curID != "" {
-				if _, err := fmt.Fprintf(out, "id: %s\n", curID); err != nil {
+				if _, err := ui.Fprintf(out, "id: %s\n", curID); err != nil {
 					return err
 				}
 			}
 			if eventType != "" {
-				if _, err := fmt.Fprintf(out, "event: %s\n", eventType); err != nil {
+				if _, err := ui.Fprintf(out, "event: %s\n", eventType); err != nil {
 					return err
 				}
 			}
 			if data != "" {
-				if _, err := fmt.Fprintf(out, "data: %s\n", prettyData(data)); err != nil {
+				if _, err := ui.Fprintf(out, "data: %s\n", prettyData(data)); err != nil {
 					return err
 				}
 			}
@@ -685,7 +685,7 @@ scanLoop:
 			if ndjson {
 				heartbeats++
 			} else {
-				if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
+				if _, err := ui.Fprintf(out, "%s\n", line); err != nil {
 					flushErr = err
 					break scanLoop
 				}
@@ -718,17 +718,17 @@ scanLoop:
 
 	switch {
 	case flushErr != nil:
-		_, _ = fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", flushErr, frames, heartbeats)
+		_, _ = ui.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", flushErr, frames, heartbeats)
 		return flushErr
 	case readErr != nil && ctx.Err() != nil:
-		_, _ = fmt.Fprintf(stderr, "events: interrupted (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		_, _ = ui.Fprintf(stderr, "events: interrupted (frames=%d heartbeats=%d)\n", frames, heartbeats)
 		return nil
 	case readErr != nil:
 		wrapped := fmt.Errorf("reading event stream: %w", readErr)
-		_, _ = fmt.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", wrapped, frames, heartbeats)
+		_, _ = ui.Fprintf(stderr, "events: %s (frames=%d heartbeats=%d)\n", wrapped, frames, heartbeats)
 		return wrapped
 	default:
-		_, _ = fmt.Fprintf(stderr, "events: stream closed by server (frames=%d heartbeats=%d)\n", frames, heartbeats)
+		_, _ = ui.Fprintf(stderr, "events: stream closed by server (frames=%d heartbeats=%d)\n", frames, heartbeats)
 		return nil
 	}
 }

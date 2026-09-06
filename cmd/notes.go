@@ -98,9 +98,9 @@ var notesGetCmd = &cobra.Command{
 			return nil
 		}
 		if title, _ := result["title"].(string); title != "" {
-			fmt.Printf("# %s\n\n", title)
+			ui.Printf("# %s\n\n", title)
 		}
-		fmt.Printf("%v\n", result["body"])
+		ui.Printf("%v\n", result["body"])
 		return nil
 	},
 }
@@ -330,15 +330,15 @@ var notesRepoStatusCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("URL:    %v\n", result["repo_url"])
-		fmt.Printf("Clone:  %v\n", result["clone_url"])
-		fmt.Printf("Status: %v\n", result["status"])
-		fmt.Printf("Enabled: %v\n", result["enabled"])
+		ui.Printf("URL:    %v\n", result["repo_url"])
+		ui.Printf("Clone:  %v\n", result["clone_url"])
+		ui.Printf("Status: %v\n", result["status"])
+		ui.Printf("Enabled: %v\n", result["enabled"])
 		if companions, ok := result["companions"].([]any); ok {
-			fmt.Println("\nCompanion subdirs:")
+			ui.Println("\nCompanion subdirs:")
 			for _, item := range companions {
 				c, _ := item.(map[string]any)
-				fmt.Printf("  %v → %v\n", c["companion_name"], c["subdir_path"])
+				ui.Printf("  %v → %v\n", c["companion_name"], c["subdir_path"])
 			}
 		}
 		return nil
@@ -436,8 +436,8 @@ var notesPatMintCmd = &cobra.Command{
 			return nil
 		}
 		ui.PrintSuccess("PAT %v created. Token (shown once):", result["id"])
-		fmt.Printf("%v\n", result["token"])
-		fmt.Printf("Clone URL: %v\n", result["clone_url"])
+		ui.Printf("%v\n", result["token"])
+		ui.Printf("Clone URL: %v\n", result["clone_url"])
 		return nil
 	},
 }
