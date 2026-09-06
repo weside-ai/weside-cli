@@ -73,7 +73,7 @@ var filesTreeCmd = &cobra.Command{
 			})
 		}
 		ui.PrintTable(headers, rows)
-		fmt.Printf("\n%v total\n", result["total_count"])
+		ui.Printf("\n%v total\n", result["total_count"])
 		return nil
 	},
 }
@@ -127,12 +127,12 @@ var filesQuotaCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("Used:   %s / %s  (%.1f%%)\n", result["used_formatted"], result["limit_formatted"], result["percent"])
+		ui.Printf("Used:   %s / %s  (%.1f%%)\n", result["used_formatted"], result["limit_formatted"], result["percent"])
 		if warning, _ := result["warning"].(bool); warning {
-			fmt.Println("Warning: approaching quota limit.")
+			ui.Println("Warning: approaching quota limit.")
 		}
 		if over, _ := result["over_limit"].(bool); over {
-			fmt.Println("Over limit.")
+			ui.Println("Over limit.")
 		}
 		return nil
 	},

@@ -22,6 +22,7 @@ var (
 // auto-strip ANSI for non-TTY output, so we gate styling ourselves to keep piped
 // output clean (matches RenderMarkdown's behaviour).
 func styled(style *lipgloss.Style, text string, f *os.File) string {
+	text = SafeText(text)
 	if os.Getenv("NO_COLOR") != "" || !isTTYFile(f) {
 		return text
 	}
@@ -53,6 +54,20 @@ func PrintTable(headers []string, rows [][]string) {
 		fmt.Println(styled(&sepStyle, "(no results)", os.Stdout))
 		return
 	}
+	// Sanitize copies before measuring or styling; leave caller-owned data intact.
+	safeHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		safeHeaders[i] = SafeText(h)
+	}
+	headers = safeHeaders
+	safeRows := make([][]string, len(rows))
+	for i, row := range rows {
+		safeRows[i] = make([]string, len(row))
+		for j, cell := range row {
+			safeRows[i][j] = SafeText(cell)
+		}
+	}
+	rows = safeRows
 
 	// Calculate column widths
 	widths := make([]int, len(headers))

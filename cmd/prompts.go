@@ -136,12 +136,12 @@ var promptsShowCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("Version: %v  (%v)\n", result["version"], result["updated_at"])
+		ui.Printf("Version: %v  (%v)\n", result["version"], result["updated_at"])
 		if r, ok := result["update_reason"]; ok && r != nil {
-			fmt.Printf("Reason:  %v\n", r)
+			ui.Printf("Reason:  %v\n", r)
 		}
-		fmt.Println()
-		fmt.Printf("%v\n", result["content"])
+		ui.Println()
+		ui.Printf("%v\n", result["content"])
 		return nil
 	},
 }
@@ -209,9 +209,9 @@ var identityShowCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("Version: %v  (by %v, %v)\n", result["version"], result["created_by"], result["updated_at"])
-		fmt.Println()
-		fmt.Printf("%v\n", result["body"])
+		ui.Printf("Version: %v  (by %v, %v)\n", result["version"], result["created_by"], result["updated_at"])
+		ui.Println()
+		ui.Printf("%v\n", result["body"])
 		return nil
 	},
 }

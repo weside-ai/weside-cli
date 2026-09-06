@@ -24,14 +24,18 @@ var providerByokTestCmd = &cobra.Command{
 		if byokTestProvider == "" || byokTestModel == "" {
 			return fmt.Errorf("--provider and --model are required")
 		}
+		key, supplied, err := secretInput(cmd, "key-stdin", byokTestKey, cmd.Flags().Changed("key"))
+		if err != nil {
+			return err
+		}
 		client, err := newAuthenticatedClient()
 		if err != nil {
 			return err
 		}
 
 		body := map[string]any{"provider": byokTestProvider, "model_name": byokTestModel}
-		if cmd.Flags().Changed("key") {
-			body["api_key"] = byokTestKey
+		if supplied {
+			body["api_key"] = key
 		}
 		var result map[string]any
 		if err := client.Post(context.Background(), "/data-residency/byok/test", body, &result); err != nil {
@@ -45,7 +49,7 @@ var providerByokTestCmd = &cobra.Command{
 		if ok, _ := result["ok"].(bool); ok {
 			ui.PrintSuccess("BYOK ok (latency %v ms, %v models).", result["latency_ms"], result["models_available_count"])
 		} else {
-			fmt.Printf("BYOK failed: %v (%v)\n", result["error_code"], result["error_detail"])
+			ui.Printf("BYOK failed: %v (%v)\n", result["error_code"], result["error_detail"])
 		}
 		return nil
 	},
@@ -59,14 +63,18 @@ var providerByokDiscoverCmd = &cobra.Command{
 		if byokDiscoverProv == "" {
 			return fmt.Errorf("--provider is required")
 		}
+		key, supplied, err := secretInput(cmd, "key-stdin", byokDiscoverKey, cmd.Flags().Changed("key"))
+		if err != nil {
+			return err
+		}
 		client, err := newAuthenticatedClient()
 		if err != nil {
 			return err
 		}
 
 		body := map[string]any{"provider": byokDiscoverProv}
-		if cmd.Flags().Changed("key") {
-			body["api_key"] = byokDiscoverKey
+		if supplied {
+			body["api_key"] = key
 		}
 		var result map[string]any
 		if err := client.Post(context.Background(), "/data-residency/byok/discover-models", body, &result); err != nil {
@@ -114,9 +122,9 @@ var configSystemCmd = &cobra.Command{
 				ui.PrintJSON(result)
 				return nil
 			}
-			fmt.Printf("%v\n", result["value"])
+			ui.Printf("%v\n", result["value"])
 			if desc, _ := result["description"].(string); desc != "" {
-				fmt.Printf("(%s)\n", desc)
+				ui.Printf("(%s)\n", desc)
 			}
 			return nil
 		}
@@ -146,6 +154,8 @@ var configSystemCmd = &cobra.Command{
 }
 
 func init() {
+	addSecretStdinFlag(providerByokTestCmd, "key-stdin")
+	addSecretStdinFlag(providerByokDiscoverCmd, "key-stdin")
 	providerByokTestCmd.Flags().StringVar(&byokTestProvider, "provider", "", "BYOK provider slug")
 	providerByokTestCmd.Flags().StringVar(&byokTestKey, "key", "", "API key (omit to reuse stored key)")
 	providerByokTestCmd.Flags().StringVar(&byokTestModel, "model", "", "model name to probe")

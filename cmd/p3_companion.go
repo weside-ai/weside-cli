@@ -236,9 +236,9 @@ var meProfileCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("ID:       %v\n", result["id"])
-		fmt.Printf("Name:     %v\n", result["display_name"])
-		fmt.Printf("Email:    %v\n", result["email"])
+		ui.Printf("ID:       %v\n", result["id"])
+		ui.Printf("Name:     %v\n", result["display_name"])
+		ui.Printf("Email:    %v\n", result["email"])
 		return nil
 	},
 }

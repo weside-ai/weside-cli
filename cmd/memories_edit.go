@@ -51,14 +51,14 @@ var memoriesGetCmd = &cobra.Command{
 			ui.PrintJSON(result)
 			return nil
 		}
-		fmt.Printf("ID:       %v  (group %v)\n", result["id"], result["memory_group_id"])
-		fmt.Printf("Type:     %v\n", result["type"])
-		fmt.Printf("Title:    %v\n", result["title"])
-		fmt.Printf("Importance: %v  Version: %v\n", result["importance"], result["version"])
-		fmt.Printf("Tags:     %v\n", result["tags"])
-		fmt.Printf("Date:     %v\n", result["memory_date"])
-		fmt.Println()
-		fmt.Printf("%v\n", result["content"])
+		ui.Printf("ID:       %v  (group %v)\n", result["id"], result["memory_group_id"])
+		ui.Printf("Type:     %v\n", result["type"])
+		ui.Printf("Title:    %v\n", result["title"])
+		ui.Printf("Importance: %v  Version: %v\n", result["importance"], result["version"])
+		ui.Printf("Tags:     %v\n", result["tags"])
+		ui.Printf("Date:     %v\n", result["memory_date"])
+		ui.Println()
+		ui.Printf("%v\n", result["content"])
 		return nil
 	},
 }

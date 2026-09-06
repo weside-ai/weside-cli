@@ -69,12 +69,12 @@ var authWhoamiCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("Logged in as: %s\n", user["email"])
+		ui.Printf("Logged in as: %s\n", user["email"])
 		if name, ok := user["display_name"]; ok && name != nil {
-			fmt.Printf("Name: %s\n", name)
+			ui.Printf("Name: %s\n", name)
 		}
 		if id, ok := user["id"]; ok {
-			fmt.Printf("User ID: %v\n", id)
+			ui.Printf("User ID: %v\n", id)
 		}
 		return nil
 	},
@@ -118,21 +118,21 @@ func printDecodedJWT(token string) error {
 		ui.PrintJSON(claims)
 		return nil
 	}
-	fmt.Printf("sub:        %v\n", claims["sub"])
+	ui.Printf("sub:        %v\n", claims["sub"])
 	if email, ok := claims["email"]; ok {
-		fmt.Printf("email:      %v\n", email)
+		ui.Printf("email:      %v\n", email)
 	}
 	if role, ok := claims["role"]; ok {
-		fmt.Printf("role:       %v\n", role)
+		ui.Printf("role:       %v\n", role)
 	}
 	if isAnon, ok := claims["is_anonymous"]; ok {
-		fmt.Printf("anonymous:  %v\n", isAnon)
+		ui.Printf("anonymous:  %v\n", isAnon)
 	}
 	if exp, ok := claims["exp"]; ok {
 		printJWTExp(exp)
 	}
 	if iat, ok := claims["iat"]; ok {
-		fmt.Printf("issued:     %v\n", timeFromUnix(iat))
+		ui.Printf("issued:     %v\n", timeFromUnix(iat))
 	}
 	return nil
 }
@@ -143,12 +143,12 @@ func printJWTExp(exp any) {
 		t := time.Unix(int64(v), 0).UTC()
 		remaining := time.Until(t).Round(time.Second)
 		if remaining > 0 {
-			fmt.Printf("expires:    %s (in %s)\n", t.Format(time.RFC3339), remaining)
+			ui.Printf("expires:    %s (in %s)\n", t.Format(time.RFC3339), remaining)
 		} else {
-			fmt.Printf("expires:    %s (EXPIRED %s ago)\n", t.Format(time.RFC3339), -remaining)
+			ui.Printf("expires:    %s (EXPIRED %s ago)\n", t.Format(time.RFC3339), -remaining)
 		}
 	default:
-		fmt.Printf("expires:    %v\n", exp)
+		ui.Printf("expires:    %v\n", exp)
 	}
 }
 
@@ -168,13 +168,13 @@ func loginPKCE() error {
 	// always a misconfiguration — warn unconditionally so the user notices
 	// that login is silently proceeding against the prod defaults.
 	if errors.Is(res.FetchError, auth.ErrPartialOverride) {
-		fmt.Fprintf(os.Stderr, "auth-config: %v — falling back to hardcoded defaults\n", res.FetchError)
+		_, _ = ui.Fprintf(os.Stderr, "auth-config: %v — falling back to hardcoded defaults\n", res.FetchError)
 	} else if IsVerbose() {
 		switch res.Source {
 		case auth.SourceFallback:
-			fmt.Fprintf(os.Stderr, "auth-config: using hardcoded fallback (well-known fetch failed: %v)\n", res.FetchError)
+			_, _ = ui.Fprintf(os.Stderr, "auth-config: using hardcoded fallback (well-known fetch failed: %v)\n", res.FetchError)
 		default:
-			fmt.Fprintf(os.Stderr, "auth-config: source=%s\n", res.Source)
+			_, _ = ui.Fprintf(os.Stderr, "auth-config: source=%s\n", res.Source)
 		}
 	}
 	cfg := res.Config
@@ -201,15 +201,15 @@ func loginPKCE() error {
 
 	// Open browser to the weside OAuth login page (provider choice happens there).
 	authURL := auth.AuthorizeURL(cfg.SupabaseURL, cfg.OAuthClientID, challenge, server.RedirectURI(), state)
-	fmt.Println("Opening browser for login...")
-	fmt.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
+	ui.Println("Opening browser for login...")
+	ui.Printf("\nIf the browser doesn't open, visit:\n%s\n\n", authURL)
 	_ = openBrowser(authURL)
 
 	// Wait for callback (2 min timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	fmt.Println("Waiting for login...")
+	ui.Println("Waiting for login...")
 	code, err := server.WaitForCode(ctx)
 	if err != nil {
 		return err
@@ -249,7 +249,7 @@ func openBrowser(url string) error {
 
 func loginDev() error {
 	email := "test@weside.ai"
-	fmt.Printf("Logging in as %s (dev mode)...\n", email)
+	ui.Printf("Logging in as %s (dev mode)...\n", email)
 
 	client := api.NewClient(GetAPIURL(), "")
 	var result map[string]any
