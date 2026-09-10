@@ -370,7 +370,19 @@ func runStickerSend(
 		ui.PrintJSON(result)
 		return nil
 	}
-	fmt.Printf("Sent %s — platform message id %v\n", shortcode, result["platform_message_id"])
+
+	// Never render a bare `%v` of a field that might be absent: `fmt` prints a
+	// missing key as "<nil>", so a response whose shape drifted would produce
+	// "platform message id <nil>" — a success line carrying no id, which is
+	// the same failure class as a publish that swallowed its 409. The id is
+	// what proves the send reached the platform, so when it is missing the
+	// line says so instead of printing punctuation.
+	if id, ok := result["platform_message_id"]; ok && fmt.Sprintf("%v", id) != "" {
+		fmt.Printf("Sent %s — platform message id %v\n", shortcode, id)
+		return nil
+	}
+	fmt.Printf("Sent %s — but the response carried no platform message id, "+
+		"so delivery is unconfirmed\n", shortcode)
 	return nil
 }
 

@@ -356,6 +356,65 @@ func TestStickerSendPostsToTheShortcodePath(t *testing.T) {
 	if !strings.Contains(out, "4711") {
 		t.Errorf("output is missing the platform message id:\n%s", out)
 	}
+	// The field name is read off the response map, so a drifted shape renders
+	// as "<nil>" rather than failing. Named here because the assertion above
+	// only catches it by the id's absence.
+	if strings.Contains(out, "<nil>") {
+		t.Errorf("output rendered a nil field:\n%s", out)
+	}
+}
+
+// The shipped Phase-4 contract types `binding_id` as an int, and this CLI
+// sends the `--binding` flag's string. The backend's Pydantic coercion accepts
+// "4" and rejects "four", which is the behaviour this CLI wants — a typo fails
+// loudly instead of silently sending somewhere else. Pinned as a string here
+// so a change to int in this file is a deliberate one, made against a measured
+// contract rather than by guess.
+func TestStickerSendKeepsTheBindingAString(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"platform_message_id":"1"}`)
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "token")
+	if _, err := captureStdoutStickers(t, func() error {
+		return runStickerSend(context.Background(), client, "12", "stampf", "4")
+	}); err != nil {
+		t.Fatalf("send returned an error: %v", err)
+	}
+	if !strings.Contains(body, `"binding_id":"4"`) {
+		t.Errorf("binding is no longer sent as a string: %s", body)
+	}
+}
+
+// A send whose response carries no id must not print a success line with
+// "<nil>" where the id belongs. This is the send-side twin of
+// TestStickerPublishSurfacesThe409: a verb that reports success it cannot
+// evidence is the failure class both tests exist for.
+func TestStickerSendWithoutAnIDDoesNotPrintNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"delivered":true}`)
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "token")
+	out, err := captureStdoutStickers(t, func() error {
+		return runStickerSend(context.Background(), client, "12", "stampf", "4")
+	})
+	if err != nil {
+		t.Fatalf("send returned an error: %v", err)
+	}
+	if strings.Contains(out, "<nil>") {
+		t.Errorf("a missing id rendered as \"<nil>\" in a success line:\n%s", out)
+	}
+	if !strings.Contains(out, "unconfirmed") {
+		t.Errorf("a missing id was not reported as unconfirmed:\n%s", out)
+	}
 }
 
 func TestStickerExportRefusesWithoutATarget(t *testing.T) {
