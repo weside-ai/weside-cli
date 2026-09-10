@@ -128,6 +128,23 @@ weside chat --stream -m "Tell me a story"
 
 > **MCP Integration:** The same tools are available as MCP server tools in the [we Plugin](https://github.com/weside-ai/claude-code-plugin) for Claude Code. CLI and MCP share the same API surface — see [API Concepts](#api-concepts) below.
 
+### Sticker Packs
+
+| Command | Description |
+|---------|-------------|
+| `weside stickers packs list` | List your packs plus every public one (`--limit`, `--cursor`) |
+| `weside stickers packs show <id>` | Show one pack and its stickers |
+| `weside stickers packs upload <file.wsp>` | Upload a `.wsp`; add `--confirm-rights` to claim the artwork rights |
+| `weside stickers packs publish <id>` | Make a pack public (`--confirm-rights` confirms in the same call) |
+| `weside stickers packs export <id> --telegram` | Create the set on your own Telegram bot |
+| `weside stickers send <id> <shortcode> --binding <n>` | Send one sticker into a bound channel |
+
+> An **uploaded** pack stays private until its rights are confirmed. `publish`
+> reports the API's refusal (`409 sticker-rights-unconfirmed`) rather than
+> printing a success line over it. `export --telegram` needs a registered
+> Telegram bot and a linked Telegram account — bots are per user, so weside has
+> no platform bot to fall back on.
+
 ### Configuration
 
 | Command | Description |
