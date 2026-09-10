@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
@@ -265,6 +266,78 @@ func (c *Client) stream(ctx context.Context, method, path string, body io.Reader
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Weside-Client", "cli")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+	}
+	if resp.StatusCode >= 400 {
+		apiErr := Error{StatusCode: resp.StatusCode, Status: resp.Status}
+		if decErr := json.NewDecoder(resp.Body).Decode(&apiErr); decErr != nil {
+			return &apiErr
+		}
+		return &apiErr
+	}
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("decoding response: %w", err)
+		}
+	}
+	return nil
+}
+
+// PostMultipart sends a `multipart/form-data` POST: one file part named
+// `file`, plus zero or more plain text fields.
+//
+// This is NOT PostStream. The plain-storage upload endpoints take the raw body
+// (a multipart boundary would land inside the stored file), but the sticker
+// pack upload is a real multipart form — the `.wsp` bytes AND a
+// `rights_confirmed` field arrive in one request.
+//
+// The whole part is buffered in memory before the request is sent, which is
+// what `mime/multipart` over a `bytes.Buffer` costs. That is acceptable here
+// and only here: the pack cap is 32 MiB. Do not reach for this function for
+// media of unbounded size.
+func (c *Client) PostMultipart(
+	ctx context.Context,
+	path, fileName string,
+	fileData []byte,
+	fields map[string]string,
+	result any,
+) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return fmt.Errorf("building the multipart file part: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return fmt.Errorf("writing the multipart file part: %w", err)
+	}
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			return fmt.Errorf("writing the %q field: %w", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("closing the multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, &body)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Weside-Client", "cli")
 	if c.Token != "" {
