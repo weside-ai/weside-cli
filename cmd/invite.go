@@ -42,7 +42,8 @@ var (
 
 // inviteScopeBody is the request body both mint and rotate send. A zero room id
 // means app scope and is sent as an absent key, never as `"room_id": 0` — the
-// server would try to resolve room 0 and answer 404.
+// server would try to resolve room 0 and refuse it (a 403, the same answer a
+// non-owner and a non-member get, so nothing about room 0 leaks).
 func inviteScopeBody(roomID int) map[string]any {
 	if roomID <= 0 {
 		return map[string]any{}
@@ -164,6 +165,12 @@ var inviteShowCmd = &cobra.Command{
 				"%v — invited by %v · %v humans, %v companions",
 				rt, result["inviter_display_name"], result["human_count"], result["companion_count"],
 			)
+			return nil
+		}
+		if result["valid"] == false {
+			// Every rejection is one constant body — no name, no scope; rendering
+			// either would suggest the server knew something about the code.
+			ui.PrintError("This invite is no longer valid.")
 			return nil
 		}
 		ui.PrintSuccess("Invited to weside by %v", result["inviter_display_name"])
