@@ -100,9 +100,11 @@ func printInviteCode(result map[string]any) {
 }
 
 var inviteMintCmd = &cobra.Command{
-	Use:   "mint",
-	Short: "Show your live invite code, drawing one if none is live",
-	Args:  cobra.NoArgs,
+	Use: "mint",
+	// An API error is the answer, not a usage mistake — no usage block after it.
+	SilenceUsage: true,
+	Short:        "Show your live invite code, drawing one if none is live",
+	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := newAuthenticatedClient()
 		if err != nil {
@@ -122,9 +124,11 @@ var inviteMintCmd = &cobra.Command{
 }
 
 var inviteRotateCmd = &cobra.Command{
-	Use:   "rotate",
-	Short: "Retire the live code and draw a fresh one",
-	Args:  cobra.NoArgs,
+	Use: "rotate",
+	// An API error is the answer, not a usage mistake — no usage block after it.
+	SilenceUsage: true,
+	Short:        "Retire the live code and draw a fresh one",
+	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := newAuthenticatedClient()
 		if err != nil {
@@ -144,9 +148,11 @@ var inviteRotateCmd = &cobra.Command{
 }
 
 var inviteShowCmd = &cobra.Command{
-	Use:   "show <code>",
-	Short: "Show what a held code reveals before redeeming",
-	Args:  cobra.ExactArgs(1),
+	Use: "show <code>",
+	// An API error is the answer, not a usage mistake — no usage block after it.
+	SilenceUsage: true,
+	Short:        "Show what a held code reveals before redeeming",
+	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newAuthenticatedClient()
 		if err != nil {
@@ -179,8 +185,10 @@ var inviteShowCmd = &cobra.Command{
 }
 
 var inviteAcceptCmd = &cobra.Command{
-	Use:   "accept <code>",
-	Short: "Redeem an invite code as the logged-in user",
+	Use: "accept <code>",
+	// An API error is the answer, not a usage mistake — no usage block after it.
+	SilenceUsage: true,
+	Short:        "Redeem an invite code as the logged-in user",
 	Long: `Redeem a code as the logged-in user.
 
 The other half of ` + "`invite mint`" + `: this is the step that needs the SECOND
