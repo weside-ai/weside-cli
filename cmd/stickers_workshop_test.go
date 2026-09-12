@@ -25,32 +25,54 @@ func workshopClient(t *testing.T, handler http.HandlerFunc) (*api.Client, func()
 	return client, server.Close
 }
 
-func TestWorkshopEscapesTheEmojiExactlyOnce(t *testing.T) {
-	var gotPath, gotRaw string
+// An emoji is NOT the discriminating input for the escape: Go encodes a path
+// segment on its way out, so a raw emoji and an escaped one produce the same
+// request line. Measured — an arm that removed url.PathEscape entirely stayed
+// green against an emoji. What the escape actually buys is refusing a segment
+// that would otherwise change the ROUTE, so that is what this asserts.
+func TestWorkshopEscapesASlashInTheSlotArgument(t *testing.T) {
+	var gotPath string
 	client, done := workshopClient(t, func(w http.ResponseWriter, r *http.Request) {
-		gotRaw = r.URL.EscapedPath()
+		// EscapedPath, not Path: Path DECODES %2F back to a slash, so reading
+		// it would show the same string whether or not we escaped.
+		gotPath = r.URL.EscapedPath()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"slot": map[string]any{"emoji": "x", "shortcode": "slot-01", "state": "preview"},
+		})
+	})
+	defer done()
+
+	// A slot argument carrying a slash must stay ONE segment. Unescaped it
+	// would address /slots/../style — a different route on the same host.
+	if _, err := captureStdoutStickers(t, func() error {
+		return runStickerWorkshopGenerate(context.Background(), client, "4", "a/b", "generate", 1, false)
+	}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/slots/a%2Fb/generate") {
+		t.Fatalf("the slash was not kept inside one segment: %q", gotPath)
+	}
+}
+
+// And the ordinary case still reaches the right route with the emoji intact.
+func TestWorkshopSendsTheEmojiAsOneSegment(t *testing.T) {
+	var gotPath string
+	client, done := workshopClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"slot":    map[string]any{"emoji": "😂", "shortcode": "slot-02", "state": "preview"},
+			"slot":    map[string]any{"emoji": "\U0001F602", "shortcode": "slot-02", "state": "preview"},
 			"sticker": map[string]any{"id": 7},
 		})
 	})
 	defer done()
 
-	_, err := captureStdoutStickers(t, func() error {
-		return runStickerWorkshopGenerate(context.Background(), client, "4", "😂", "generate", 1, false)
-	})
-	if err != nil {
+	if _, err := captureStdoutStickers(t, func() error {
+		return runStickerWorkshopGenerate(context.Background(), client, "4", "\U0001F602", "generate", 1, false)
+	}); err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-
-	// The wire form carries the escape...
-	if !strings.Contains(gotRaw, "%F0%9F%98%82") {
-		t.Fatalf("emoji not percent-encoded on the wire: %q", gotRaw)
-	}
-	// ...and it decodes back to exactly one emoji, not a double-escaped one.
-	if !strings.HasSuffix(gotPath, "/stickers/workshop/4/slots/😂/generate") {
-		t.Fatalf("decoded path is wrong (double escape?): %q", gotPath)
+	if !strings.HasSuffix(gotPath, "/stickers/workshop/4/slots/\U0001F602/generate") {
+		t.Fatalf("decoded path is wrong: %q", gotPath)
 	}
 }
 
