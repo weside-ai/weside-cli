@@ -18,11 +18,10 @@ import (
 // router never matches — a 404 that reads like a missing route rather than
 // like a missing escape.
 
-func workshopClient(t *testing.T, handler http.HandlerFunc) (*api.Client, func()) {
+func workshopClient(t *testing.T, handler http.HandlerFunc) (client *api.Client, done func()) {
 	t.Helper()
 	server := httptest.NewServer(handler)
-	client := api.NewClient(server.URL, "token")
-	return client, server.Close
+	return api.NewClient(server.URL, "token"), server.Close
 }
 
 // An emoji is NOT the discriminating input for the escape: Go encodes a path
@@ -174,7 +173,7 @@ func TestWorkshopSlotsRendersTheStateColumn(t *testing.T) {
 }
 
 func TestWorkshopStyleRefusesAnEmptyChange(t *testing.T) {
-	client, done := workshopClient(t, func(w http.ResponseWriter, _ *http.Request) {
+	client, done := workshopClient(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatal("no request should be made when nothing was passed")
 	})
 	defer done()

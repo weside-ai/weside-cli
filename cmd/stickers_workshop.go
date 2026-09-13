@@ -310,7 +310,7 @@ func runStickerWorkshopStyle(
 	var err error
 	if file != "" {
 		var data []byte
-		data, err = os.ReadFile(file) //nolint:gosec // a path the operator typed
+		data, err = os.ReadFile(file)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", file, err)
 		}
@@ -343,8 +343,10 @@ func printSlotResult(result map[string]any, note string) {
 	sticker, _ := result["sticker"].(map[string]any)
 	parts := []string{}
 	if slot != nil {
-		parts = append(parts, fmt.Sprintf("slot %v (%v)", slot["emoji"], slot["shortcode"]))
-		parts = append(parts, fmt.Sprintf("state %v", slot["state"]))
+		parts = append(parts,
+			fmt.Sprintf("slot %v (%v)", slot["emoji"], slot["shortcode"]),
+			fmt.Sprintf("state %v", slot["state"]),
+		)
 	}
 	if sticker != nil {
 		parts = append(parts, fmt.Sprintf("sticker %v", sticker["id"]))
