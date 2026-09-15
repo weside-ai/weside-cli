@@ -241,3 +241,12 @@ func capturedProviderOutput(t *testing.T, result map[string]any) string {
 	}
 	return buf.String()
 }
+
+// Measured against staging rc.3: cobra printed fifteen lines of usage above
+// the 409, burying the one sentence that tells the user what to do. Usage is
+// for a malformed invocation, not for a server that answered clearly.
+func TestProviderEuOnlyDoesNotPrintUsageOnAServerError(t *testing.T) {
+	if !providerEuOnlyCmd.SilenceUsage {
+		t.Error("SilenceUsage is off — a 409 would be buried under the usage block")
+	}
+}
