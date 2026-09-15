@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -110,4 +113,131 @@ func TestProviderSetCommandUsesPresetRegion(t *testing.T) {
 	if _, ok := putBody["quality"]; ok {
 		t.Errorf("quality should be omitted, got %v", putBody["quality"])
 	}
+}
+
+// WA-2257: the switch is the fourth shape of the data-residency union. It
+// modifies the current selection, so the body must NOT restate region,
+// quality or preset id — a caller that did would silently re-pick a preset
+// while only meaning to flip a switch.
+func TestProviderEuOnlySendsOnlyTheSwitch(t *testing.T) {
+	for _, tt := range []struct {
+		arg  string
+		want bool
+	}{{arg: "on", want: true}, {arg: "off", want: false}} {
+		t.Run(tt.arg, func(t *testing.T) {
+			var putBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut || r.URL.Path != "/api/v1/data-residency/" {
+					http.Error(w, "unexpected request", http.StatusNotFound)
+					return
+				}
+				if err := json.NewDecoder(r.Body).Decode(&putBody); err != nil {
+					t.Errorf("decode PUT body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"eu_only":true,"eu_only_disables":[{"key":"web_search"}]}`))
+			}))
+			defer srv.Close()
+
+			t.Setenv("WESIDE_TOKEN", "token")
+			viper.Set("api_url", srv.URL)
+			t.Cleanup(func() { viper.Set("api_url", "") })
+
+			if err := providerEuOnlyCmd.RunE(providerEuOnlyCmd, []string{tt.arg}); err != nil {
+				t.Fatalf("provider eu-only %s: %v", tt.arg, err)
+			}
+
+			if got := putBody["type"]; got != "eu_only" {
+				t.Errorf("type = %v, want eu_only", got)
+			}
+			if got := putBody["eu_only"]; got != tt.want {
+				t.Errorf("eu_only = %v, want %v", got, tt.want)
+			}
+			for _, key := range []string{"region", "quality", "preset_id"} {
+				if _, ok := putBody[key]; ok {
+					t.Errorf("%s must not be restated, got %v", key, putBody[key])
+				}
+			}
+		})
+	}
+}
+
+// The 409 is the one refusal a user can act on, and the server's sentence
+// already says what to do. Wrapping it in "setting EU only: …" buries the
+// instruction behind the failure.
+func TestProviderEuOnlyPassesTheConflictSentenceThrough(t *testing.T) {
+	const detail = "EU only can only be switched on while your inference runs in the EU."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"detail":"` + detail + `"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("WESIDE_TOKEN", "token")
+	viper.Set("api_url", srv.URL)
+	t.Cleanup(func() { viper.Set("api_url", "") })
+
+	err := providerEuOnlyCmd.RunE(providerEuOnlyCmd, []string{"on"})
+	if err == nil {
+		t.Fatal("expected the 409 to surface as an error")
+	}
+	if err.Error() != detail {
+		t.Errorf("error = %q, want exactly the server's sentence %q", err.Error(), detail)
+	}
+}
+
+func TestProviderEuOnlyRejectsAnythingButOnOff(t *testing.T) {
+	if err := providerEuOnlyCmd.RunE(providerEuOnlyCmd, []string{"true"}); err == nil {
+		t.Fatal("expected 'true' to be rejected — the verb takes on|off")
+	}
+}
+
+// An older backend has no `eu_only` field. Printing "EU only: false" there
+// would be a claim about a setting that does not exist on that server.
+func TestPrintEuOnlySaysNothingWhenTheServerDidNot(t *testing.T) {
+	out := capturedProviderOutput(t, map[string]any{"type": "region"})
+	if out != "" {
+		t.Errorf("printed %q for a response without eu_only, want nothing", out)
+	}
+}
+
+func TestPrintEuOnlyCountsWhatIsHidden(t *testing.T) {
+	out := capturedProviderOutput(t, map[string]any{
+		"eu_only":           true,
+		"eu_only_disables":  []any{map[string]any{}, map[string]any{}},
+		"eu_only_available": true,
+	})
+	if !strings.Contains(out, "on") || !strings.Contains(out, "2 sources hidden") {
+		t.Errorf("printed %q, want the state and the count", out)
+	}
+}
+
+func TestPrintEuOnlyNamesWhyItIsUnavailable(t *testing.T) {
+	out := capturedProviderOutput(t, map[string]any{
+		"eu_only":           false,
+		"eu_only_available": false,
+	})
+	if !strings.Contains(out, "needs the EU region") {
+		t.Errorf("printed %q, want the reason it cannot be turned on", out)
+	}
+}
+
+func capturedProviderOutput(t *testing.T, result map[string]any) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	stdout := os.Stdout
+	os.Stdout = w
+	printEuOnly(result)
+	_ = w.Close()
+	os.Stdout = stdout
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return buf.String()
 }

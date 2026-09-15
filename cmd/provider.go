@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	"github.com/spf13/cobra"
+	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
@@ -43,6 +46,99 @@ var providerShowCmd = &cobra.Command{
 		if result["has_api_key"] == true {
 			ui.Printf("BYOK:   yes\n")
 		}
+		printEuOnly(result)
+		return nil
+	},
+}
+
+// printEuOnly renders the WA-2257 switch, and only when the server sent it —
+// an older backend has no such field and must not print "EU only: false",
+// which would be a claim about a setting that does not exist there.
+//
+// The count is the point of the line. `eu_only_disables` is what the switch
+// takes away, so a user who sees "on (9 sources hidden)" knows there is
+// something to look at; `--json` carries the rows themselves.
+func printEuOnly(result map[string]any) {
+	value, present := result["eu_only"]
+	if !present {
+		return
+	}
+
+	state := "off"
+	if value == true {
+		state = "on"
+	}
+
+	hidden, _ := result["eu_only_disables"].([]any)
+	if value == true && len(hidden) > 0 {
+		ui.Printf("EU only: %s (%d sources hidden)\n", state, len(hidden))
+		return
+	}
+	if value != true && result["eu_only_available"] == false {
+		ui.Printf("EU only: %s (needs the EU region)\n", state)
+		return
+	}
+	ui.Printf("EU only: %s\n", state)
+}
+
+var providerEuOnlyCmd = &cobra.Command{
+	Use:   "eu-only <on|off>",
+	Short: "Turn EU only on or off (WA-2257)",
+	Long: `Turn the EU-only switch on or off.
+
+With it on, nothing weside CHOOSES for you leaves the EU: no platform tool
+whose processor sits outside it, no image model on a non-EU endpoint, no
+speech output. What you connected yourself is your own choice and stays.
+
+It can only be turned ON while your inference runs in the EU — pick the EU
+region first with 'weside provider presets' and 'weside provider set <id>'.
+Moving to any other region clears it again.
+
+'weside provider show' prints the current state and how many sources it hides.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		var value bool
+		switch args[0] {
+		case "on":
+			value = true
+		case "off":
+			value = false
+		default:
+			return fmt.Errorf("expected 'on' or 'off', got %q", args[0])
+		}
+
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+
+		// The discriminated union's fourth shape: it modifies the current
+		// selection instead of replacing it, so region, quality and preset id
+		// are not restated here.
+		body := map[string]any{"type": "eu_only", "eu_only": value}
+		var result map[string]any
+		if err := client.Put(context.Background(), "/data-residency/", body, &result); err != nil {
+			var apiErr *api.Error
+			// 409 is the one refusal a user can act on, and the server's own
+			// sentence says what to do — pass it through rather than wrapping
+			// it in "setting EU only: …", which buries the instruction.
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+				return fmt.Errorf("%s", apiErr.Detail)
+			}
+			return fmt.Errorf("setting EU only: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+
+		if value {
+			hidden, _ := result["eu_only_disables"].([]any)
+			ui.PrintSuccess("EU only is on — %d sources are now hidden", len(hidden))
+			return nil
+		}
+		ui.PrintSuccess("EU only is off")
 		return nil
 	},
 }
@@ -197,6 +293,7 @@ var providerByokCmd = &cobra.Command{
 func init() {
 	addSecretStdinFlag(providerByokCmd, "key-stdin")
 	providerCmd.AddCommand(providerShowCmd)
+	providerCmd.AddCommand(providerEuOnlyCmd)
 	providerCmd.AddCommand(providerPresetsCmd)
 	providerCmd.AddCommand(providerSetCmd)
 	providerCmd.AddCommand(providerByokCmd)
