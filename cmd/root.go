@@ -23,7 +23,29 @@ var (
 var rootCmd = &cobra.Command{
 	Use:           "weside",
 	SilenceErrors: true,
-	Short:         "CLI for the weside.ai AI Companion Platform",
+	// Usage is help for someone who typed the command wrong; it is noise above
+	// a connection refused. cobra prints it for EVERY error unless silenced, so
+	// a `weside api DELETE /rooms/9/participants/9 --v2` against a stopped
+	// backend answered with the full flag table and the real error one line
+	// below it — which reads like a rejected signature, and was misread as
+	// exactly that (WA-2283 state file, point 3).
+	//
+	// The hook rather than a plain `SilenceUsage: true` is what splits the two
+	// cases: cobra validates args and flags BEFORE running any PersistentPreRun
+	// (`command.go`: ValidateArgs at 968, the PersistentPreRunE walk at 985), so
+	// a wrong argument count still reaches the usage block, and only an error
+	// raised from RunE onwards is silent. Pinned from both sides by
+	// TestArgumentErrorStillPrintsUsage / TestRuntimeErrorPrintsNoUsageBlock.
+	//
+	// The one case that moves with it: ValidateRequiredFlags runs AFTER the hook
+	// (1007), so a missing required flag now prints no usage either. `goals
+	// reorder --ids` is the only required flag in the tree and says what it
+	// needs in its own error.
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		cmd.SilenceUsage = true
+		return nil
+	},
+	Short: "CLI for the weside.ai AI Companion Platform",
 	Long: `weside is a command-line interface for interacting with your AI Companions
 on the weside.ai platform.
 
