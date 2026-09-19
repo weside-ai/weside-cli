@@ -2,7 +2,7 @@
 
 Go CLI for the weside.ai AI Companion Platform.
 
-**Workspace:** `~/weside/CLAUDE.md` — Cross-repo Overview
+**Workspace:** `~/weside/AGENTS.md` — Cross-repo Overview
 
 ---
 

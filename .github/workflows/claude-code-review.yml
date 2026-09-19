@@ -5,8 +5,8 @@ on:
     types: [opened, synchronize, ready_for_review, reopened]
     paths-ignore:
       - "**.md"
-      - "!CLAUDE.md"
-      - "!**/CLAUDE.md"
+      - "!AGENTS.md"
+      - "!**/AGENTS.md"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -56,7 +56,7 @@ jobs:
 
             Focus: BLOCKING (security, logic bugs), WARNING (perf, error handling), SUGGESTION (style).
             This is a Go CLI. Check error wrapping, timeouts, auth token handling, test coverage.
-            Use CLAUDE.md for project guidance.
+            Use AGENTS.md for project guidance.
             Post ONE comment via `gh pr comment`. End with verdict:
             <!-- VERDICT:BLOCKING/WARNING/PASS -->
 
