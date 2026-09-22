@@ -84,6 +84,11 @@ func printEuOnly(result map[string]any) {
 var providerEuOnlyCmd = &cobra.Command{
 	Use:   "eu-only <on|off>",
 	Short: "Turn EU only on or off (WA-2257)",
+	// The 409's sentence IS this command's most useful output, and cobra
+	// prints fifteen lines of usage above any RunE error by default — which
+	// buries it. Usage belongs to a malformed invocation, not to a server
+	// that answered clearly. Measured against staging rc.3.
+	SilenceUsage: true,
 	Long: `Turn the EU-only switch on or off.
 
 With it on, nothing weside CHOOSES for you leaves the EU: no platform tool
