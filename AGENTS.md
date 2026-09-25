@@ -193,7 +193,14 @@ for _, item := range companions {
 - **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` plus `companions skills list/available/install/set/uninstall`, `companions resume`, `companions prompts versions/show/restore`, `companions identity show/set`, `companions tools list/set`. Media upload is a Follow-up.
 - **Triggers:** `triggers list/toggle/set/delete <companion>` — debug why a trigger fires or not.
 
+## Security
+
+Never commit tokens, credentials, or contents of `~/.weside/credentials.json`; never print a
+token or secret value into a log, test fixture, or commit message. If a task needs backend or
+infrastructure secrets handling, that lives in `weside-infrastructure/docs/security/SECRETS.md`
+(separate, private repo) — not here.
+
 ---
 
-**Version:** 2.6
-**Last Updated:** 2026-08-14 (CLI v1.3.0; caught the command surface up to the release — `rooms activity`, `rooms invites accept/preview`, `stage`, `search`)
+**Version:** 2.7
+**Last Updated:** 2026-09-25 (added Security section)
