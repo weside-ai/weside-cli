@@ -374,9 +374,18 @@ func runStickerSend(
 	// Never render a bare `%v` of a field that might be absent: `fmt` prints a
 	// missing key as "<nil>", so a response whose shape drifted would produce
 	// "platform message id <nil>" — a success line carrying no id, which is
-	// the same failure class as a publish that swallowed its 409. The id is
-	// what proves the send reached the platform, so when it is missing the
-	// line says so instead of printing punctuation.
+	// the same failure class as a publish that swallowed its 409. When no id
+	// comes back the line says so instead of printing punctuation.
+	//
+	// Since WA-2337 the server appends a room sticker message and the room's
+	// projection delivers it to the channel (202, `room_message_id`); a server
+	// from before that release still sends it directly and answers with the
+	// platform's message id.
+	if id, ok := result["room_message_id"]; ok && fmt.Sprintf("%v", id) != "" {
+		fmt.Printf("Queued %s as room message %v — the channel delivery follows\n",
+			shortcode, id)
+		return nil
+	}
 	if id, ok := result["platform_message_id"]; ok && fmt.Sprintf("%v", id) != "" {
 		fmt.Printf("Sent %s — platform message id %v\n", shortcode, id)
 		return nil

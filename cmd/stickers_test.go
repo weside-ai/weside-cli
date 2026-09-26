@@ -417,6 +417,33 @@ func TestStickerSendWithoutAnIDDoesNotPrintNil(t *testing.T) {
 	}
 }
 
+// WA-2337 retired the direct platform send: the route now appends a room
+// sticker message and the room's own projection delivers it, answering 202
+// with the room message id. Until that backend is deployed an older server
+// still answers with the platform message id, which the test above pins.
+func TestStickerSendReportsTheQueuedRoomMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = fmt.Fprint(w, `{"room_message_id":9001}`)
+	}))
+	defer srv.Close()
+
+	client := api.NewClient(srv.URL, "token")
+	out, err := captureStdoutStickers(t, func() error {
+		return runStickerSend(context.Background(), client, "12", "stampf", "4")
+	})
+	if err != nil {
+		t.Fatalf("send returned an error: %v", err)
+	}
+	if !strings.Contains(out, "room message 9001") {
+		t.Errorf("output is missing the room message id:\n%s", out)
+	}
+	if strings.Contains(out, "unconfirmed") || strings.Contains(out, "<nil>") {
+		t.Errorf("a queued send was reported as unconfirmed:\n%s", out)
+	}
+}
+
 func TestStickerExportRefusesWithoutATarget(t *testing.T) {
 	stickerExportTelegram = false
 	defer func() { stickerExportTelegram = false }()
