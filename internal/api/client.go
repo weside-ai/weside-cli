@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -35,11 +36,46 @@ func NewClient(baseURL, token string) *Client {
 type Error struct {
 	StatusCode int
 	Status     string
+	Type       string `json:"type"`
 	Detail     string `json:"detail"`
 	Message    string `json:"message"`
 }
 
+// MFASessionConfirmationSlugs are the problem-type slugs of the backend's 403
+// for an aal1 OAuth session of a user with a verified factor (WA-2309). The
+// backend is renaming `mfa-session-binding-required` (field `bind_url`) to
+// `mfa-session-confirmation-required` (field `confirm_url`); the CLI matches
+// both so it works against either backend.
+var MFASessionConfirmationSlugs = []string{
+	"mfa-session-confirmation-required",
+	"mfa-session-binding-required",
+}
+
+// MFASessionReloginMessage is what the CLI prints for that 403. A session from
+// before the two-factor login step can only be replaced, so the CLI tells the
+// user to log in again and never opens or prints the backend's URL.
+const MFASessionReloginMessage = "this session was signed in without your two-factor code — run `weside auth login` again"
+
+// IsMFASessionConfirmationRequired reports whether a 403 problem type names
+// the two-factor session confirmation (either slug).
+func IsMFASessionConfirmationRequired(statusCode int, problemType string) bool {
+	if statusCode != http.StatusForbidden {
+		return false
+	}
+	for _, slug := range MFASessionConfirmationSlugs {
+		if problemType == slug || strings.HasSuffix(problemType, "/"+slug) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Error) Error() string {
+	// Before Detail: the backend's detail tells an app user to confirm in the
+	// app, which is the wrong instruction for a CLI session.
+	if IsMFASessionConfirmationRequired(e.StatusCode, e.Type) {
+		return MFASessionReloginMessage
+	}
 	if e.Detail != "" {
 		return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Detail)
 	}

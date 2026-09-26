@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/weside-ai/weside-cli/internal/api"
 )
 
 // Client communicates with the weside MCP server via HTTP JSON-RPC.
@@ -99,6 +102,16 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusForbidden {
+		var problem struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(respBody, &problem)
+		if api.IsMFASessionConfirmationRequired(resp.StatusCode, problem.Type) {
+			return nil, errors.New(api.MFASessionReloginMessage)
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {

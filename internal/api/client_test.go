@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/weside-ai/weside-cli/internal/api"
@@ -126,5 +127,39 @@ func TestErrorMessage(t *testing.T) {
 				t.Errorf("Error() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestErrorMessage_MFASessionConfirmationRequired(t *testing.T) {
+	for _, slug := range []string{"mfa-session-confirmation-required", "mfa-session-binding-required"} {
+		t.Run(slug, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"type":"https://api.weside.ai/errors/` + slug + `","title":"x","status":403,` +
+					`"detail":"Confirm this sign-in once in the weside app to use it.",` +
+					`"confirm_url":"https://mobile.weside.ai/oauth/confirm?session=s1","bind_url":"https://mobile.weside.ai/oauth/bind?session=s1"}`))
+			}))
+			defer srv.Close()
+
+			err := api.NewClient(srv.URL, "tok").Get(context.Background(), "/auth/me", nil)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "weside auth login") {
+				t.Errorf("message %q does not tell the user to log in again", msg)
+			}
+			if strings.Contains(msg, "http") || strings.Contains(msg, "weside app") {
+				t.Errorf("message %q carries the URL or the app instruction", msg)
+			}
+		})
+	}
+}
+
+func TestErrorMessage_OtherForbiddenKeepsDetail(t *testing.T) {
+	e := api.Error{StatusCode: 403, Type: "https://api.weside.ai/errors/mfa-required", Detail: "nope"}
+	if got := e.Error(); got != "API error 403: nope" {
+		t.Errorf("Error() = %q", got)
 	}
 }
