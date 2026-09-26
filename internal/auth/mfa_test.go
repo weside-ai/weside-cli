@@ -82,14 +82,15 @@ func TestCompleteMFA_VerifiedFactorUpgradesSession(t *testing.T) {
 }
 
 func TestCompleteMFA_NoVerifiedFactorNeverPrompts(t *testing.T) {
-	for name, factors := range map[string]string{
-		"null":                  `null`,
-		"empty":                 `[]`,
-		"unverified totp":       `[{"id":"f-totp","factor_type":"totp","status":"unverified"}]`,
-		"verified passkey only": `[{"id":"f-pk","factor_type":"webauthn","status":"verified"}]`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := &fakeSupabase{factorsJSON: factors}
+	cases := []struct{ name, factors string }{
+		{"null", `null`},
+		{"empty", `[]`},
+		{"unverified totp", `[{"id":"f-totp","factor_type":"totp","status":"unverified"}]`},
+		{"verified passkey only", `[{"id":"f-pk","factor_type":"webauthn","status":"verified"}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeSupabase{factorsJSON: tc.factors}
 			srv := f.server(t)
 			defer srv.Close()
 			res, err := auth.CompleteMFA(srv.URL, "anon", loginTokens, func(int) (string, error) {

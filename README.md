@@ -51,6 +51,8 @@ weside chat --stream -m "Tell me a story"
 ```
 
 > **Note:** `weside auth login` opens your browser and runs a full OAuth login (PKCE) against weside.ai — pick Google, Apple, or email, and credentials are stored in `~/.weside/credentials.json`. Use `--dev` against a local backend for development, or set `WESIDE_TOKEN` for CI/headless use.
+>
+> **Two-factor authentication:** if your account has an authenticator app set up, `weside auth login` asks for the 6-digit code in the terminal after the browser step (input is hidden). A wrong code gets one retry. The code raises the CLI session to the same assurance as an app sign-in with the code; confirming it also signs out your other sessions that were signed in without the code. A CLI session from before this step fails with "run `weside auth login` again" — do that once.
 
 ## Commands
 
