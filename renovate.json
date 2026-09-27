@@ -36,6 +36,7 @@
       "matchUpdateTypes": ["patch", "minor"],
       "groupName": "go dependencies",
       "automerge": true,
+      "recreateWhen": "always",
       "automergeType": "pr",
       "labels": ["go", "automerge"]
     },
@@ -46,6 +47,7 @@
       "matchUpdateTypes": ["patch", "minor"],
       "groupName": "npm distribution wrapper",
       "automerge": true,
+      "recreateWhen": "always",
       "automergeType": "pr",
       "labels": ["npm", "automerge"]
     },
@@ -54,6 +56,7 @@
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["patch", "minor", "major", "digest", "pin"],
       "automerge": true,
+      "recreateWhen": "always",
       "automergeType": "pr",
       "groupName": "github actions",
       "labels": ["automerge", "ci"]
@@ -82,7 +85,8 @@
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "labels": ["security"],
-    "automerge": true
+    "automerge": true,
+    "recreateWhen": "always"
   },
   "commitMessagePrefix": "chore(deps):",
   "commitMessageAction": "update",
