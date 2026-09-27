@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/api"
 	"github.com/weside-ai/weside-cli/internal/auth"
@@ -215,23 +216,53 @@ func loginPKCE() error {
 		return err
 	}
 
-	// Exchange code for tokens
-	result, err := auth.ExchangeCode(cfg.SupabaseURL, cfg.SupabaseAnonKey, cfg.OAuthClientID, code, verifier, server.RedirectURI())
+	if err := finishLogin(cfg, code, verifier, server.RedirectURI(), promptTOTPCode, auth.NewStorage()); err != nil {
+		return err
+	}
+	ui.PrintSuccess("Login successful!")
+	return nil
+}
+
+// finishLogin exchanges the authorization code, raises the session to aal2
+// with the user's TOTP code when the user has a verified factor, and stores
+// the resulting tokens. An OAuth-server session starts at aal1 and the backend
+// refuses it for a factor-bearing user (WA-2309); the verify runs with this
+// session's own access token, so the stored tokens are the upgraded session.
+func finishLogin(cfg *auth.Config, code, verifier, redirectURI string, prompt auth.CodePrompt, storage *auth.Storage) error {
+	login, err := auth.ExchangeCode(cfg.SupabaseURL, cfg.SupabaseAnonKey, cfg.OAuthClientID, code, verifier, redirectURI)
 	if err != nil {
 		return err
 	}
-
-	// Save tokens
-	storage := auth.NewStorage()
+	result, err := auth.CompleteMFA(cfg.SupabaseURL, cfg.SupabaseAnonKey, login, prompt)
+	if err != nil {
+		return err
+	}
 	if err := storage.Save(&auth.Tokens{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
 	}); err != nil {
 		return fmt.Errorf("saving tokens: %w", err)
 	}
-
-	ui.PrintSuccess("Login successful!")
 	return nil
+}
+
+// promptTOTPCode reads the 6-digit code from the terminal without echo. The
+// prompt goes to stderr so stdout stays clean for --json.
+func promptTOTPCode(attempt int) (string, error) {
+	fd := os.Stdin.Fd()
+	if !term.IsTerminal(fd) {
+		return "", fmt.Errorf("this account uses two-factor authentication: run `weside auth login` in a terminal to enter the code")
+	}
+	if attempt > 1 {
+		_, _ = fmt.Fprintln(os.Stderr, "That code was not accepted. Try again.")
+	}
+	_, _ = fmt.Fprint(os.Stderr, "Two-factor code: ")
+	code, err := term.ReadPassword(fd)
+	_, _ = fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("reading two-factor code: %w", err)
+	}
+	return string(code), nil
 }
 
 func openBrowser(url string) error {

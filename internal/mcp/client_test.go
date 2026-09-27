@@ -185,3 +185,20 @@ func TestClientError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestCall_MFASessionConfirmationRequiredTellsToLogInAgain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"https://api.weside.ai/errors/mfa-session-confirmation-required","status":403,"confirm_url":"https://mobile.weside.ai/oauth/confirm?session=s1"}`))
+	}))
+	defer srv.Close()
+
+	_, err := mcp.NewClient(srv.URL, "tok").ListTools(context.Background())
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "weside auth login") || strings.Contains(err.Error(), "http") {
+		t.Errorf("error = %q, want the re-login message without a URL", err)
+	}
+}
