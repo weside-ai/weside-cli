@@ -3,10 +3,10 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    paths-ignore:
-      - "**.md"
-      - "!AGENTS.md"
-      - "!**/AGENTS.md"
+    # NO paths-ignore. `claude-review` is a required status check on main, and a
+    # required check whose workflow never triggers posts no status at all — the
+    # PR then waits forever (weside-infrastructure #300/#301 on 2026-08-09,
+    # weside-core #3919). The docs-only saving lives in a job step instead.
   workflow_dispatch:
     inputs:
       pr_number:
@@ -20,7 +20,13 @@ concurrency:
 
 jobs:
   claude-review:
-    if: ${{ !(github.event_name == 'pull_request' && (startsWith(github.head_ref, 'dependabot/') || startsWith(github.head_ref, 'renovate/'))) }}
+    # Bot PRs skip the review. The branch name alone is not enough: anyone could
+    # name a branch `renovate/x` and skip the required review (weside-infrastructure
+    # audit F12, 2026-09-19) — the author must be the bot as well.
+    if: >-
+      ${{ !(github.event_name == 'pull_request'
+            && ((startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')
+                || (startsWith(github.head_ref, 'dependabot/') && github.event.pull_request.user.login == 'dependabot[bot]'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -30,20 +36,59 @@ jobs:
       id-token: write
     env:
       PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+      # The commit under review. The verdict is bound to it (see the gate below).
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
     steps:
+      # Docs-only and workflow-touch detection, same predicate as
+      # weside-infrastructure. On workflow_dispatch HEAD_SHA is resolved here.
+      - name: Detect documentation-only change
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${HEAD_SHA}" ]; then
+            HEAD_SHA=$(gh pr view "${PR_NUMBER}" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)
+            echo "HEAD_SHA=${HEAD_SHA}" >> "$GITHUB_ENV"
+          fi
+          [ -n "${HEAD_SHA}" ] || { echo "::error::Could not resolve HEAD_SHA — no verdict can be bound without it."; exit 1; }
+          FILES=$(gh pr view "${PR_NUMBER}" --repo "${{ github.repository }}" --json files --jq '.files[].path')
+          echo "changed files:"; echo "${FILES}" | sed 's/^/  /'
+          # Anything that is not a plain .md file is reviewed; so is agent
+          # configuration (AGENTS.md, CLAUDE.md, .claude/).
+          NON_DOCS=$(echo "${FILES}" | grep -vE '\.md$' || true)
+          CONFIG_MD=$(echo "${FILES}" | grep -E '(^|/)(AGENTS|CLAUDE)\.md$|^\.claude/' || true)
+          if [ -z "${NON_DOCS}" ] && [ -z "${CONFIG_MD}" ]; then
+            echo "IS_DOCS_ONLY=true" >> "$GITHUB_ENV"
+          else
+            echo "IS_DOCS_ONLY=false" >> "$GITHUB_ENV"
+          fi
+          if echo "${FILES}" | grep -qE '^\.github/workflows/'; then
+            echo "TOUCHES_WORKFLOWS=true" >> "$GITHUB_ENV"
+          else
+            echo "TOUCHES_WORKFLOWS=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Skip review for documentation-only change
+        if: env.IS_DOCS_ONLY == 'true'
+        run: echo "Documentation-only change — no review needed; the status still reports."
+
       - name: Checkout repository
+        if: env.IS_DOCS_ONLY != 'true'
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Clean Claude Code lock files
+        if: env.IS_DOCS_ONLY != 'true'
         run: rm -rf ~/.local/state/claude/locks
 
       - name: Run Claude Code Review
+        if: env.IS_DOCS_ONLY != 'true'
         id: claude-review
+        # A crash must not stop the gate step; the gate then finds no verdict
+        # and fails, instead of passing an unreviewed PR.
         continue-on-error: true
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1.0.235
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
@@ -57,39 +102,69 @@ jobs:
             Focus: BLOCKING (security, logic bugs), WARNING (perf, error handling), SUGGESTION (style).
             This is a Go CLI. Check error wrapping, timeouts, auth token handling, test coverage.
             Use AGENTS.md for project guidance.
-            Post ONE comment via `gh pr comment`. End with verdict:
-            <!-- VERDICT:BLOCKING/WARNING/PASS -->
+            Post ONE comment via `gh pr comment`. End with a verdict line that
+            carries the reviewed commit verbatim:
+            `<!-- VERDICT:BLOCKING SHA:${{ env.HEAD_SHA }} -->`,
+            `<!-- VERDICT:WARNING SHA:${{ env.HEAD_SHA }} -->` or
+            `<!-- VERDICT:PASS SHA:${{ env.HEAD_SHA }} -->`.
+            The CI gate accepts a verdict only for exactly this commit.
 
-          claude_args: "--model claude-sonnet-5 --allowedTools Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
+          # The tool list MUST stay inside the inner double quotes. Unquoted, every
+          # `Bash(gh pr …)` permission splits on its spaces and the reviewer cannot
+          # post (WA-1853) — PRs #68–#72 got a green check and no review comment.
+          # Opus 5.5 at medium effort since 2026-09-27, same as every weside repo: an
+          # offline bench over ten weside-core PRs found more of the real issues than
+          # Sonnet and raised no false BLOCKING (weside-core .weside/optimization/).
+          claude_args: '--model claude-opus-5-5 --effort medium --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"'
 
       - name: Check for blocking issues
+        if: env.IS_DOCS_ONLY != 'true'
+        run: |
+          # Login matching is deliberately loose. `gh pr view --json comments` reports
+          # the author as `claude`, but the REST API reports the same account as
+          # `claude[bot]` — an exact comparison is correct only for whichever surface
+          # it was written against. Same filter weside-core uses.
+          LATEST_COMMENT=$(gh pr view "$PR_NUMBER" --json comments \
+            --jq '[.comments[] | select(.author.login | test("claude";"i"))] | last | .body // ""')
+          # The verdict must belong to THIS commit (weside-infrastructure audit F12,
+          # 2026-09-19): without the SHA, a PASS from the first push kept every later
+          # push green.
+          if echo "$LATEST_COMMENT" | grep -q "SHA:${HEAD_SHA}"; then
+            if echo "$LATEST_COMMENT" | grep -qE "VERDICT:(BLOCKING|WARNING)"; then
+              echo "::error::Claude Code Review found blocking issues for ${HEAD_SHA}."
+              exit 1
+            elif echo "$LATEST_COMMENT" | grep -q "VERDICT:PASS"; then
+              echo "✅ Claude Code Review passed for ${HEAD_SHA}"
+            else
+              echo "::error::The comment names ${HEAD_SHA} but carries no verdict — re-run this job."
+              exit 1
+            fi
+          elif echo "$LATEST_COMMENT" | grep -q "VERDICT:"; then
+            echo "::error::The latest verdict belongs to another commit (expected SHA:${HEAD_SHA}). A stale verdict is no verdict — re-run this job."
+            exit 1
+          elif [ "${TOUCHES_WORKFLOWS}" = "true" ]; then
+            # claude-code-action refuses to run when the PR changes a workflow file
+            # (it requires byte-identity with the default branch). Expected, but the
+            # PR was NOT reviewed — say so instead of reporting a meaningless green.
+            echo "::warning::No review: the action skips PRs that modify .github/workflows/. Review this PR by hand before merging."
+          else
+            # No verdict means no review happened — that is a failure, not a pass
+            # (WA-1853: the reviewer could not post for lack of gh rights, and the
+            # check went green anyway).
+            echo "::error::No Claude review verdict found — the review did not complete. Check the 'Run Claude Code Review' step log, then re-run this job."
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
-        run: |
-          LATEST_CLAUDE_COMMENT=$(gh pr view "$PR_NUMBER" --json comments \
-            --jq '[.comments[] | select(.author.login == "claude")] | last | .body // ""')
-
-          if [ "$REVIEW_OUTCOME" = "failure" ]; then
-            echo "Claude Code Review crashed - inconclusive"
-            exit 0
-          elif echo "$LATEST_CLAUDE_COMMENT" | grep -q "VERDICT:BLOCKING"; then
-            echo "::error::Claude Code Review found BLOCKING issues!"
-            exit 1
-          elif echo "$LATEST_CLAUDE_COMMENT" | grep -q "VERDICT:WARNING"; then
-            echo "::error::Claude Code Review found WARNING issues!"
-            exit 1
-          elif echo "$LATEST_CLAUDE_COMMENT" | grep -q "VERDICT:PASS"; then
-            echo "Claude Code Review passed"
-          else
-            echo "No verdict found"
-          fi
 
   # Bot PRs (dependabot/renovate) skip claude-review above. Since claude-review
   # is a required status check, set a passing commit status so those PRs aren't
   # blocked. No code review needed for dependency bumps.
   claude-review-bot-stub:
-    if: github.event_name == 'pull_request' && (startsWith(github.head_ref, 'dependabot/') || startsWith(github.head_ref, 'renovate/'))
+    if: >-
+      ${{ github.event_name == 'pull_request'
+          && ((startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')
+              || (startsWith(github.head_ref, 'dependabot/') && github.event.pull_request.user.login == 'dependabot[bot]')) }}
     runs-on: ubuntu-latest
     permissions:
       statuses: write
