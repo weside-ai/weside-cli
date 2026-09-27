@@ -23,6 +23,12 @@ const maxCodeAttempts = 2
 // VerifiedTOTPFactor returns the id of the user's first verified TOTP factor,
 // or "" when the user has none. It reads GET /auth/v1/user with the session's
 // own access token.
+//
+// Only TOTP counts, on purpose: the weside backend's policy counts exactly the
+// same thing (weside-core `current_user_has_verified_mfa_factor()`,
+// factor_type 'totp'), and phone/WebAuthn MFA are switched off in Supabase. A
+// user with only another factor type is therefore no factor holder to the
+// backend and gets no 403 — no login loop.
 func VerifiedTOTPFactor(supabaseURL, supabaseAnonKey, accessToken string) (string, error) {
 	var user struct {
 		Factors []struct {
@@ -31,12 +37,12 @@ func VerifiedTOTPFactor(supabaseURL, supabaseAnonKey, accessToken string) (strin
 			Status     string `json:"status"`
 		} `json:"factors"`
 	}
-	status, err := supabaseJSON(http.MethodGet, supabaseURL, "/auth/v1/user", supabaseAnonKey, accessToken, nil, &user)
+	status, errCode, err := supabaseJSON(http.MethodGet, supabaseURL, "/auth/v1/user", supabaseAnonKey, accessToken, nil, &user)
 	if err != nil {
 		return "", fmt.Errorf("reading two-factor status: %w", err)
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("reading two-factor status failed (%d)", status)
+		return "", fmt.Errorf("reading two-factor status failed (%d%s) — try `weside auth login` again", status, errCode)
 	}
 	for _, f := range user.Factors {
 		if f.FactorType == "totp" && f.Status == "verified" {
@@ -57,17 +63,17 @@ func VerifyTOTP(supabaseURL, supabaseAnonKey, accessToken, factorID, code string
 	var challenge struct {
 		ID string `json:"id"`
 	}
-	status, err := supabaseJSON(http.MethodPost, supabaseURL, base+"/challenge", supabaseAnonKey, accessToken, map[string]any{}, &challenge)
+	status, errCode, err := supabaseJSON(http.MethodPost, supabaseURL, base+"/challenge", supabaseAnonKey, accessToken, map[string]any{}, &challenge)
 	if err != nil {
 		return nil, fmt.Errorf("two-factor challenge: %w", err)
 	}
 	if status != http.StatusOK || challenge.ID == "" {
-		return nil, fmt.Errorf("two-factor challenge failed (%d)", status)
+		return nil, fmt.Errorf("two-factor challenge failed (%d%s)", status, errCode)
 	}
 
 	var result PKCEResult
 	body := map[string]string{"challenge_id": challenge.ID, "code": code}
-	status, err = supabaseJSON(http.MethodPost, supabaseURL, base+"/verify", supabaseAnonKey, accessToken, body, &result)
+	status, errCode, err = supabaseJSON(http.MethodPost, supabaseURL, base+"/verify", supabaseAnonKey, accessToken, body, &result)
 	if err != nil {
 		return nil, fmt.Errorf("two-factor verify: %w", err)
 	}
@@ -75,7 +81,7 @@ func VerifyTOTP(supabaseURL, supabaseAnonKey, accessToken, factorID, code string
 		return nil, ErrWrongCode
 	}
 	if status != http.StatusOK || result.AccessToken == "" {
-		return nil, fmt.Errorf("two-factor verify failed (%d)", status)
+		return nil, fmt.Errorf("two-factor verify failed (%d%s)", status, errCode)
 	}
 	return &result, nil
 }
@@ -110,13 +116,14 @@ func CompleteMFA(supabaseURL, supabaseAnonKey string, login *PKCEResult, prompt 
 
 // supabaseJSON sends one JSON request to the Supabase auth API with the
 // session's bearer token and decodes a 200 body into result. It returns the
-// HTTP status; the body of an error status is not decoded.
-func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, result any) (int, error) {
+// HTTP status and, for an error status, Supabase's `error_code` formatted as
+// ": <code>" (empty when the body carries none) so messages can name it.
+func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, result any) (int, string, error) {
 	var reader *bytes.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		reader = bytes.NewReader(data)
 	} else {
@@ -124,7 +131,7 @@ func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, 
 	}
 	req, err := http.NewRequest(method, strings.TrimRight(supabaseURL, "/")+path, reader)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
@@ -135,13 +142,22 @@ func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, 
 
 	resp, err := supabaseHTTPClient.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusOK && result != nil {
+	if resp.StatusCode != http.StatusOK {
+		var e struct {
+			ErrorCode string `json:"error_code"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&e) == nil && e.ErrorCode != "" {
+			return resp.StatusCode, ": " + e.ErrorCode, nil
+		}
+		return resp.StatusCode, "", nil
+	}
+	if result != nil {
 		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return resp.StatusCode, fmt.Errorf("parsing response: %w", err)
+			return resp.StatusCode, "", fmt.Errorf("parsing response: %w", err)
 		}
 	}
-	return resp.StatusCode, nil
+	return resp.StatusCode, "", nil
 }

@@ -177,3 +177,22 @@ func TestCompleteMFA_ServerErrorOnVerifyDoesNotRetry(t *testing.T) {
 		t.Errorf("prompts = %d, want 1 (no retry on a server error)", prompts)
 	}
 }
+
+func TestCompleteMFA_RateLimitNamesSupabaseErrorCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/user"):
+			_, _ = w.Write([]byte(`{"factors":` + verifiedTOTP + `}`))
+		case strings.HasSuffix(r.URL.Path, "/challenge"):
+			_, _ = w.Write([]byte(`{"id":"ch-1"}`))
+		default:
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error_code":"over_request_rate_limit","msg":"slow down"}`))
+		}
+	}))
+	defer srv.Close()
+	_, err := auth.CompleteMFA(srv.URL, "anon", loginTokens, func(int) (string, error) { return "123456", nil })
+	if err == nil || !strings.Contains(err.Error(), "429: over_request_rate_limit") {
+		t.Fatalf("err = %v, want the 429 with Supabase's error_code", err)
+	}
+}
