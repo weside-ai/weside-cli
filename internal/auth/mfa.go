@@ -118,12 +118,12 @@ func CompleteMFA(supabaseURL, supabaseAnonKey string, login *PKCEResult, prompt 
 // session's bearer token and decodes a 200 body into result. It returns the
 // HTTP status and, for an error status, Supabase's `error_code` formatted as
 // ": <code>" (empty when the body carries none) so messages can name it.
-func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, result any) (int, string, error) {
+func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, result any) (status int, errCode string, err error) {
 	var reader *bytes.Reader
 	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return 0, "", err
+		data, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			return 0, "", marshalErr
 		}
 		reader = bytes.NewReader(data)
 	} else {
@@ -155,8 +155,8 @@ func supabaseJSON(method, supabaseURL, path, anonKey, accessToken string, body, 
 		return resp.StatusCode, "", nil
 	}
 	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return resp.StatusCode, "", fmt.Errorf("parsing response: %w", err)
+		if decodeErr := json.NewDecoder(resp.Body).Decode(result); decodeErr != nil {
+			return resp.StatusCode, "", fmt.Errorf("parsing response: %w", decodeErr)
 		}
 	}
 	return resp.StatusCode, "", nil
