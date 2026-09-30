@@ -30,7 +30,7 @@ func companionListResponse(id, name string) string {
 
 // companionDetailResponse returns a typical companion detail response body.
 func companionDetailResponse(id, name string) string {
-	return `{"id":` + id + `,"name":"` + name + `","personality":"test","system_prompt":"Hello from system","short_description":"A test companion","category":"general","tags":["a","b"],"is_published":true,"avatar_url":null,"banner_url":null}`
+	return `{"id":` + id + `,"name":"` + name + `","personality":"test","system_prompt":"Hello from system","short_description":"A test companion","category":"general","tags":["a","b"],"is_published":true,"avatar":null,"banner":null}`
 }
 
 // --- resolveCompanionID ---
@@ -505,6 +505,27 @@ func TestShowResponseContainsSystemPrompt(t *testing.T) {
 	tags, _ := companion["tags"].([]any)
 	if len(tags) != 2 {
 		t.Errorf("tags len = %d, want 2", len(tags))
+	}
+}
+
+// --- image sets ---
+
+func TestImageURLReadsTheOriginal(t *testing.T) {
+	var companion map[string]any
+	body := `{"avatar":{"original":{"url":"https://media.test/users/7/avatar/a.jpg?X-Amz-Signature=1","sha256":"ab"},` +
+		`"thumb":{"url":"https://media.test/users/7/avatar/a.thumb.jpg?X-Amz-Signature=1","sha256":"cd"}},"banner":null}`
+	if err := json.Unmarshal([]byte(body), &companion); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got := imageURL(companion["avatar"]); got != "https://media.test/users/7/avatar/a.jpg?X-Amz-Signature=1" {
+		t.Errorf("avatar = %q, want the original's signed URL", got)
+	}
+	if got := imageURL(companion["banner"]); got != "" {
+		t.Errorf("banner = %q, want empty for a companion without one", got)
+	}
+	if got := imageURL(companion["missing"]); got != "" {
+		t.Errorf("missing = %q, want empty", got)
 	}
 }
 
