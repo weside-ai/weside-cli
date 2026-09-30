@@ -107,8 +107,8 @@ var companionsShowCmd = &cobra.Command{
 		}
 
 		ui.Printf("Short Description: %v\n", companion["short_description"])
-		ui.Printf("Avatar URL:        %v\n", companion["avatar_url"])
-		ui.Printf("Banner URL:        %v\n", companion["banner_url"])
+		ui.Printf("Avatar:            %s\n", imageURL(companion["avatar"]))
+		ui.Printf("Banner:            %s\n", imageURL(companion["banner"]))
 
 		if created, ok := companion["created_at"]; ok {
 			ui.Printf("Created:           %v\n", created)
@@ -500,4 +500,21 @@ func init() {
 	companionsCmd.AddCommand(companionsUpdateCmd)
 	companionsCmd.AddCommand(companionsDeleteCmd)
 	rootCmd.AddCommand(companionsCmd)
+}
+
+// imageURL returns the signed URL of an image set's original, or "" when the
+// companion has none. The server sends each picture as `{original, thumb}`,
+// each a presigned media-store URL valid for 20–30 minutes, and null when
+// there is no picture or the store did not answer (WA-2349).
+func imageURL(set any) string {
+	images, ok := set.(map[string]any)
+	if !ok {
+		return ""
+	}
+	original, ok := images["original"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	url, _ := original["url"].(string)
+	return url
 }
