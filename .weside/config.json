@@ -45,5 +45,9 @@
         "architect"
       ]
     }
+  },
+  "optimization": {
+    "target_model": "claude-opus-5-5",
+    "target_effort": "medium"
   }
 }
