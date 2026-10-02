@@ -732,7 +732,6 @@ scanLoop:
 	}
 }
 
-// rooms invites subgroup — list/create/revoke room invites.
 func init() {
 	roomsTraceCmd.Flags().IntVar(&roomsTraceLimit, "limit", 50, "max trace rows (1-200)")
 	roomsTraceCmd.Flags().BoolVar(&roomsTraceFull, "full", false, "show full tool output (no truncation)")

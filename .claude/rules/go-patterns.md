@@ -28,7 +28,7 @@ paths:
 ## API Client
 
 - Base client: `internal/api/client.go`
-- All methods return `(Result, error)` — never just error
+- `Get/Post/Put/Patch/Delete` decode into a `result any` out-parameter and return `error`; `DoRaw`/`Subscribe` return `(*http.Response, error)`
 - JSON decoding: `json.NewDecoder(resp.Body)` — not `io.ReadAll`
 - Context propagation: all API calls take `ctx context.Context`
 - Parse responses as `map[string]any` (field names vary per endpoint)
@@ -37,7 +37,7 @@ paths:
 ## Command Structure
 
 - One file per command group: `cmd/<noun>.go`
-- Use `newAuthenticatedClient()` for API access
+- Use `newAuthenticatedClient()` for the v1 API, `newAuthenticatedClientV2()` for `/api/v2/*`
 - Support `--json` output: `if IsJSON() { ui.PrintJSON(result); return nil }`
 - Errors to stderr, data to stdout
 - Register commands in `init()`: `rootCmd.AddCommand(<noun>Cmd)`
