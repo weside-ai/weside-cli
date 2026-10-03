@@ -78,7 +78,7 @@ weside-cli/
 ├── Makefile                # Build targets
 ├── .golangci.yml           # Linter config (v2 format)
 ├── .goreleaser.yaml        # Release config (6 platforms + Homebrew)
-└── .github/workflows/      # CI (lint, test, build, security) + Release
+└── .github/workflows/      # CI (lint, test, build, security), Claude Code Review, Release, npm Publish
 ```
 
 ## Backend API
@@ -107,7 +107,7 @@ WA-XXX
 
 `WA-XXX` is mandatory once a ticket exists; bot commits and small `docs:`/`chore:` commits without a ticket omit it.
 
-**Branch protection on main:** PR required, CI must pass (lint, test, build, **security**).
+**Branch protection on main:** PR required; required checks `lint`, `test`, `build (linux, amd64)`, `security`, `claude-review`.
 
 > `security` (govulncheck) is **blocking** — there is no `continue-on-error` in `.github/workflows/ci.yml`. A vulnerability in a *called* code path fails the PR, so a dependency bump is part of the fix.
 

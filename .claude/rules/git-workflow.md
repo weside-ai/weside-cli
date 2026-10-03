@@ -45,6 +45,7 @@ Installed hooks (via `.pre-commit-config.yaml`):
 | `test` | go test -race + coverage | Yes |
 | `build` | Cross-compile 5 platforms | Yes (linux/amd64) |
 | `security` | govulncheck | **Yes** — blocking, no continue-on-error |
+| `claude-review` | Claude Code Review (`claude-code-review.yml`) | Yes |
 
 A vulnerability in a *called* code path fails the PR. Fix = bump the dependency
 (`go get <mod>@<fixed>` + `go mod tidy`), then verify with `make security`.
