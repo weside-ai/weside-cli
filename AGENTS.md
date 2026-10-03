@@ -93,7 +93,7 @@ API Docs: `weside-core/apps/backend` (Swagger at `/docs`).
 
 ## Git Workflow
 
-**Branch format:** `<type>/WA-XXX-short-description`
+**Branch format:** `<type>/WA-XXX-short-description` (without a ticket: `<type>/short-description`)
 
 Types: `feat`, `fix`, `docs`, `ci`, `test`, `chore`, `refactor`
 
@@ -105,9 +105,11 @@ Types: `feat`, `fix`, `docs`, `ci`, `test`, `chore`, `refactor`
 WA-XXX
 ```
 
+`WA-XXX` is mandatory once a ticket exists; bot commits and small `docs:`/`chore:` commits without a ticket omit it.
+
 **Branch protection on main:** PR required, CI must pass (lint, test, build, **security**).
 
-> `security` (govulncheck) is **blocking** — there is no `continue-on-error` in `.github/workflows/ci.yml`. A vulnerability in a *called* code path fails the PR, so a dependency bump is part of the fix. (v1.0.0 was blocked by GO-2026-5970 in `golang.org/x/text`, reachable via `ui.PrintError`.)
+> `security` (govulncheck) is **blocking** — there is no `continue-on-error` in `.github/workflows/ci.yml`. A vulnerability in a *called* code path fails the PR, so a dependency bump is part of the fix.
 
 **Release & Install:**
 
@@ -138,45 +140,7 @@ Users install via:
 - **Homebrew:** `brew install weside-ai/tap/weside-cli`
 - **npm:** `npm install -g weside-cli` (or `npx weside-cli@latest`)
 
-## How to Add a New Command
-
-1. Create `cmd/<noun>.go`
-2. Define `var <noun>Cmd = &cobra.Command{...}`
-3. Add subcommands: `var <noun>ListCmd = &cobra.Command{...}`
-4. Register in `init()`: `rootCmd.AddCommand(<noun>Cmd)`
-5. Use `newAuthenticatedClient()` for authenticated API calls (v1 surface), `newAuthenticatedClientV2()` for the `/api/v2/*` surface (chat, rooms)
-6. Parse API responses as `map[string]any` (API field names vary)
-7. Support `--json` output: `if IsJSON() { ui.PrintJSON(result); return nil }`
-8. Write tests in `cmd/<noun>_test.go` (`httptest.NewServer`, see `cmd/chat_test.go`)
-
-Tips:
-- **Probe the endpoint first** with `weside api GET /some/path --json` — cheaper than guessing the response shape from the schema.
-- **Long-lived/SSE calls** take `cmd.Context()` (never `context.Background()`) so Ctrl-C cancels them, and use `client.Subscribe` / `DoRawNoTimeout` to escape the 30 s request timeout.
-- **Side-effecting commands** (cancel, undo, context-break, deactivate) are gated behind `--confirm`.
-- **Companion resolution:** `resolveCompanion(flagValue)` accepts an id or name and falls back to the selected companion when empty — prefer it over reading `default_companion_id` directly.
-
-## API Response Parsing Pattern
-
-Backend responses use different key names per endpoint. Always use `map[string]any`:
-
-```go
-var result map[string]any
-client.Get(ctx, "/companions", &result)
-companions, _ := result["companions"].([]any)  // NOT "items"!
-for _, item := range companions {
-    c, _ := item.(map[string]any)
-    name := fmt.Sprintf("%v", c["name"])
-}
-```
-
-**Known response keys:**
-- Companions: `{"companions": [...], "total": N}`
-- Memories: `{"memories": [...]}`
-- Goals: `{"active": [...], "paused": [...], "completed": [...]}`
-- Provider: `{"type": "...", "model_name": "...", "preset_display_name": "..."}`
-- Presets: `{"groups": [{"region": "EUR", "presets": [...]}]}`
-- Rooms (v2): `{"rooms": [...], "total": N}`; room timeline `{"messages": [...], "next_cursor": ..., "prev_cursor": ...}`; each message `{"role": "user|assistant|mentor|system", "content": [{"type":"text","text":"..."}]}`
-- Chat (v2): the reply arrives over the room SSE stream as `room_message_delta`/`room_message_complete` events; the complete frame is `{"message": {"role": "assistant", "content": [{"type": "text", "text": "..."}]}}`
+Adding a command and the known response keys: `.claude/rules/go-patterns.md` (loads with `**/*.go`).
 
 ## Current Limitations
 
@@ -185,11 +149,11 @@ for _, item := range companions {
   - **Two-factor step (WA-2309):** a Supabase OAuth-server session is always `aal1`. After the code exchange, `finishLogin` (`cmd/auth.go`) reads `GET /auth/v1/user` → `factors[]`; with a verified `totp` factor it prompts for the code (hidden, stderr, `charmbracelet/x/term`) and runs `POST /auth/v1/factors/{id}/challenge` + `/verify` with the session's own access token (`internal/auth/mfa.go`). The returned `aal2` tokens are stored; a refresh through `/auth/v1/oauth/token` keeps `aal2`. The backend's 403 for an `aal1` OAuth session of a factor user has the problem type `mfa-session-confirmation-required` (formerly `mfa-session-binding-required`); `api.Error` and the MCP client match both slugs and print "run `weside auth login` again", never the URL.
   - **First-time authorization** (no remembered `oauth_consents` row for this client + user) bounces through weside's own consent screen, `mobile.weside.ai/oauth/mcp-consent` — the same screen MCP clients (Claude Code, Cursor) use, not a CLI-specific page. That route's effective URL is controlled by the Supabase-side `oauth_server_authorization_path` setting (a path, resolved against Site URL); see the runbook above for an incident where a stale value briefly broke this for all Supabase-OAuth-2.1 clients including this CLI.
   - **Auth-config discovery:** `internal/auth/discovery.go` resolves Supabase URL + anon-key + callback port + MCP URL + OAuth client_id via `Resolve()`. Precedence: `--supabase-url`/`--supabase-anon-key` flags (must be set together) → `WESIDE_SUPABASE_URL` / `WESIDE_SUPABASE_ANON_KEY` env (must be set together) → `~/.weside/config.yaml` `auth.*` cache → live GET `<api_url>/.well-known/weside-auth` (5s timeout, response cached) → hardcoded fallback constants in `discovery.go`. `oauth_client_id` is an **optional** well-known field (older backends omit it → hardcoded default `91aa6153-…`, a public PKCE client, non-sensitive). Run `weside config refresh-auth` to force-refresh the cache. AC-6 (auto-refresh on 401) is not implemented: `auth.RefreshAccessToken` (`internal/auth/pkce.go`) exists, but no command calls it yet.
-- **Chat (v2, WA-1548):** Room-based. `weside chat <companion> -m "…"` resolves the companion's DM room (`POST /api/v2/rooms/dm/{companion_id}`), opens the room SSE subscription (`GET /api/v2/rooms/{room_id}/events`), and only then sends (`POST /api/v2/rooms/{room_id}/messages`). The reply arrives over the stream as `room_message_delta` (live with `--stream`) / `room_message_complete` (fallback when no deltas). A `client_message_id` idempotency key is sent on every POST. Threads no longer exist — the room is the conversation.
+- **Chat (v2, WA-1548):** Room-based. `weside chat <companion> -m "…"` resolves the companion's DM room (`POST /api/v2/rooms/dm/{companion_id}`), opens the room SSE subscription (`GET /api/v2/rooms/{room_id}/events`), and only then sends (`POST /api/v2/rooms/{room_id}/messages`). The reply arrives over the stream as `room_message_delta` (live with `--stream`) / `room_message_complete` (fallback when no deltas). A `client_message_id` idempotency key is sent on every POST.
   - **Event correlation matters:** a room can have concurrent/queued turns, so `sendChat` records the `active_turns` from the `connected` frame, captures its own turn's `server_message_id` from `room_message_start`, and ignores deltas/completions from any other turn. It also terminates on `room_turn_ended` (cancelled/failed/timed_out) — without that the CLI hangs forever on those outcomes.
 - **Rooms (v2):** `rooms list/show/mute/unmute/delete` plus the debug surface in `cmd/rooms_debug.go`: `rooms trace <id>` (checkpoint trace), `rooms participants <id>`, `rooms tool-call <id> <tcid>`, `rooms cancel <id> --confirm`, `rooms undo <id> --confirm`, `rooms context-break <id> --confirm`, `rooms rename <id> [title] [--clear]`, `rooms group --companions …`, `rooms dm <companion_id>`, `rooms events <id> [--since] [--raw]` (live SSE mitschnitt), `rooms confirmations <id> [--limit]` (the Gefallen asks in the timeline plus the status the server holds for each — the API exposes an ask by id only, so the ids are parsed out of the messages). All on `/api/v2/rooms/*`; destructive commands are gated by `--confirm`. `rooms list --json` preserves the caller-owned `muted` field. `rooms show` pages via `--cursor`/`--after`/`--limit`; `rooms trace --full` prints untruncated tool output.
-  - **`rooms activity <id>`** reads the durable activity feed (tool-audit rows — tool calls, memory saves, note writes), scoped to your own companions. A newest-first slice bounded by `--limit`, **never a page** — WA-2145 removed this endpoint's cursor along with the app's Verlauf screen, its only pager. `--scope last_turn` narrows to the newest turn per own companion. (`rooms show --cursor` is the MESSAGE timeline and is unaffected.)
-- **Invite (v1, WA-2235):** `invite mint [--room <id>]`, `invite rotate [--room <id>]`, `invite show <code>`, `invite accept <code>` — the ONE invite code for the app and for a room, on `/api/v1/invites/*`. `--room` picks the room scope (owner only); no flag is app scope, sent as an absent key, never `room_id: 0`. `accept` is the half that needs the *second* identity, which is why it is a verb. Unknown, expired, revoked and spent codes all answer the same 404 by design, so the error cannot tell you which. Replaces the v2 `rooms invites …` subtree, whose endpoints WA-2235 deletes.
+  - **`rooms activity <id>`** reads the durable activity feed (tool-audit rows — tool calls, memory saves, note writes), scoped to your own companions. A newest-first slice bounded by `--limit`, **never a page**. `--scope last_turn` narrows to the newest turn per own companion. (`rooms show --cursor` is the MESSAGE timeline and is unaffected.)
+- **Invite (v1, WA-2235):** `invite mint [--room <id>]`, `invite rotate [--room <id>]`, `invite show <code>`, `invite accept <code>` — the ONE invite code for the app and for a room, on `/api/v1/invites/*`. `--room` picks the room scope (owner only); no flag is app scope, sent as an absent key, never `room_id: 0`. `accept` is the half that needs the *second* identity, which is why it is a verb. Unknown, expired, revoked and spent codes all answer the same 404 by design, so the error cannot tell you which.
 - **Stage & search (v2):** `stage list [--room] [--cursor] [--limit]` / `stage delete <artifact_id>` — artifacts a companion rendered belong to the user, so they outlive the room they were born in. `search <query> [--limit]` queries memories, notes and files; results stay **grouped per engine** (vector distance and Postgres FTS ranks are not on one scale), and each group carries its own availability so "nothing there" is distinguishable from "it did not run".
 - **Ops & account (v1):** `files tree/quota/delete`, `me usage [--month] [--daily]`, `user-config get/set/delete`, `sandbox-secrets list/presets/put/delete` (masked), `config system [key]`, `notes list/get/search`, `notes-repo status/repair`, `notes-pat list/mint/revoke`, `provider byok-test/byok-discover`.
 - **Lower-frequency (v1/v2):** `referrals list/create/revoke/stats`, `circles list/create/delete`, `plans show/me`, `billing usage/purchase-eligibility`, `channels list/set-active`, `experts list/befriend`, `evolution current/start/dismiss/presets`, `reminders list/dismiss`, `mentor-sessions <companion>`, `subscriptions list/toggle`, `me-account profile/profile-set/locale/sliding-window/export/deactivate`, `integrations list/catalog/disconnect/reconcile`, `safety block/unblock`. List tables are best-effort (first array in the response); `--json` gives the exact wire shape.
@@ -206,8 +170,3 @@ Never commit tokens, credentials, or contents of `~/.weside/credentials.json`; n
 token or secret value into a log, test fixture, or commit message. If a task needs backend or
 infrastructure secrets handling, that lives in `weside-infrastructure/docs/security/SECRETS.md`
 (separate, private repo) — not here.
-
----
-
-**Version:** 2.7
-**Last Updated:** 2026-09-25 (added Security section)
