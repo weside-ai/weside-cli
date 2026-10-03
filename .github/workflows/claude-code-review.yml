@@ -151,11 +151,30 @@ jobs:
             # No verdict means no review happened — that is a failure, not a pass
             # (WA-1853: the reviewer could not post for lack of gh rights, and the
             # check went green anyway).
-            echo "::error::No Claude review verdict found — the review did not complete. Check the 'Run Claude Code Review' step log, then re-run this job."
+            # Name the cause (auth · quota · refused · other) from the execution file
+            # (.github/scripts/review_failure_cause.py; upstream tests in
+            # weside-ai/claude-code-plugin) in one status comment, updated in place,
+            # and in the job summary. Its marker is not the review's, so no later
+            # run reads it as a verdict.
+            CAUSE=$(python3 .github/scripts/review_failure_cause.py "${EXECUTION_FILE:-${RUNNER_TEMP}/claude-execution-output.json}" 2>/dev/null \
+              || echo "Claude review produced no verdict (other): action error: see the run log.")
+            BODY=$(printf '%s\n' '<!-- claude-review-status -->' '<!-- VERDICT:ERROR -->' '## Code Review — not run' '' "⚠️ ${CAUSE}" '' \
+              "The check is red by design: a review without a verdict never passes. Details: [this run](${RUN_URL}).")
+            STATUS_ID=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq '[.[] | select(.body | startswith("<!-- claude-review-status -->"))] | last | .id // empty' || true)
+            if [ -n "$STATUS_ID" ]; then
+              gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${STATUS_ID}" -f body="$BODY" >/dev/null || true
+            else
+              gh pr comment "$PR_NUMBER" --body "$BODY" || true
+            fi
+            echo "$CAUSE" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::${CAUSE}"
             exit 1
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
   # Bot PRs (dependabot/renovate) skip claude-review above. Since claude-review
   # is a required status check, set a passing commit status so those PRs aren't
