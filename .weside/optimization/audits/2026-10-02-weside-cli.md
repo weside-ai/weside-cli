@@ -23,7 +23,7 @@ Target claude-opus-5-5 / medium, Claude Code 2.1.288, we 7.3.0.
 
 Ziel ist ein Audit der Instruktionsdateien, die in Sessions in `~/weside/weside-cli` geladen werden. Gesucht werden veraltete Muster, also Text für ältere Modelle, überholte Fakten und Dateien, die sich widersprechen. Das Ergebnis sind ein Report und ein vorgeschlagener Diff.
 
-**Wenn du diesen Plan freigibst, wird kein Hunk angewendet.** Jeder Hunk ist ein Vorschlag, den du einzeln übernimmst. Hunks in `~/AGENTS.md` wirken auf alle Projekte unter `/home/fbiebl`. Hunks in `~/weside/AGENTS.md` wirken auf alle weside-Repos.
+**Wenn du diesen Plan freigibst, wird kein Hunk angewendet.** Jeder Hunk ist ein Vorschlag, den du einzeln übernimmst. Hunks in `~/AGENTS.md` wirken auf alle Projekte in deinem Home-Verzeichnis. Hunks in `~/weside/AGENTS.md` wirken auf alle weside-Repos.
 
 #### Annahmen (Step 0)
 
@@ -151,8 +151,8 @@ Jeder Befund hat einen eigenen Hunk. Die Hunks für #1 und #2 sind laut G2 ausdr
 
 #### #7 `~/AGENTS.md:28` (wirkt auf alle Projekte)
 ```diff
--`ssh -p 30022 fbiebl@workspace.weside.ai` (Port seit 2026-09-14, vorher 22 — Direktpfad nur bei Bedarf:
-+`ssh -p 30022 fbiebl@workspace.weside.ai` (Direktpfad nur bei Bedarf:
+-`ssh -p <port> <user>@<host>` (Port seit <Datum>, vorher <alter Port> — Direktpfad nur bei Bedarf:
++`ssh -p <port> <user>@<host>` (Direktpfad nur bei Bedarf:
 ```
 
 #### #8 `~/AGENTS.md:13` (wirkt auf alle Projekte)
