@@ -545,3 +545,124 @@ func TestJSONOutputFormatting(t *testing.T) {
 		t.Errorf("JSON output missing 'id' key: %s", output)
 	}
 }
+
+// --- day ring and sleep (WA-2421) ---
+
+const dayBody = `{"window_start":"2026-10-03T14:05:00+02:00","window_end":"2026-10-04T14:05:00+02:00",` +
+	`"timezone":"Europe/Berlin","resting_since":null,` +
+	`"arcs":[{"kind":"dreaming","start":"2026-10-04T03:00:00+02:00","end":"2026-10-04T03:15:00+02:00"},` +
+	`{"kind":"talked","start":"2026-10-04T09:00:00+02:00","end":"2026-10-04T09:12:00+02:00","room_id":12}],` +
+	`"dots":[{"kind":"acted","at":"2026-10-04T10:30:00+02:00","category":"notes"},` +
+	`{"kind":"remembered","at":"2026-10-04T11:00:00+02:00"}]}`
+
+// TestCompanionsDayReadsTheRingAndPrintsEveryMark drives `companions day` by
+// name: the name resolves through the list, the ring is read from
+// /companions/{id}/day, and every arc and dot is one row with its detail.
+func TestCompanionsDayReadsTheRingAndPrintsEveryMark(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/companions":
+			_, _ = w.Write([]byte(companionListResponse("7", "Nox")))
+		case "/api/v1/companions/7/day":
+			gotPath, gotMethod = r.URL.Path, r.Method
+			_, _ = w.Write([]byte(dayBody))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", srv.URL)
+	defer viper.Set("api_url", "")
+
+	out := captureStdout(t, func() error {
+		return companionsDayCmd.RunE(companionsDayCmd, []string{"Nox"})
+	})
+
+	if gotPath != "/api/v1/companions/7/day" || gotMethod != http.MethodGet {
+		t.Fatalf("request = %s %s, want GET /api/v1/companions/7/day", gotMethod, gotPath)
+	}
+	for _, want := range []string{
+		"Europe/Berlin",
+		"dreaming", "2026-10-04 03:00–2026-10-04 03:15",
+		"talked", "room 12",
+		"acted", "notes",
+		"remembered", "2026-10-04 11:00",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Resting since") {
+		t.Errorf("an awake companion printed a resting line:\n%s", out)
+	}
+}
+
+// TestCompanionsDayResting prints the resting line and no marks.
+func TestCompanionsDayResting(t *testing.T) {
+	out := captureStdout(t, func() error {
+		printCompanionDay(map[string]any{
+			"window_start":  "2026-10-03T14:05:00+02:00",
+			"window_end":    "2026-10-04T14:05:00+02:00",
+			"timezone":      "Europe/Berlin",
+			"resting_since": "2026-10-02T22:10:00+02:00",
+			"arcs":          []any{},
+			"dots":          []any{},
+		})
+		return nil
+	})
+
+	if !strings.Contains(out, "Resting since 2026-10-02 22:10") {
+		t.Errorf("output lacks the resting line:\n%s", out)
+	}
+	if !strings.Contains(out, "(no results)") {
+		t.Errorf("a resting companion printed marks:\n%s", out)
+	}
+}
+
+// TestCompanionsDayNotFoundIsAnError surfaces the owner-only 404 as an error.
+func TestCompanionsDayNotFoundIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Companion with ID 9 not found."}`))
+	}))
+	defer srv.Close()
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", srv.URL)
+	defer viper.Set("api_url", "")
+
+	err := companionsDayCmd.RunE(companionsDayCmd, []string{"9"})
+
+	if err == nil || !strings.Contains(err.Error(), "reading companion day") {
+		t.Fatalf("err = %v, want a wrapped 404", err)
+	}
+}
+
+// TestCompanionsSleepPostsToPresenceSleep checks the verb, the path and the
+// success line of `companions sleep`.
+func TestCompanionsSleepPostsToPresenceSleep(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"companion_id":7}`))
+	}))
+	defer srv.Close()
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", srv.URL)
+	defer viper.Set("api_url", "")
+
+	out := captureStdout(t, func() error {
+		return companionsSleepCmd.RunE(companionsSleepCmd, []string{"7"})
+	})
+
+	if gotPath != "/api/v1/companions/7/presence/sleep" || gotMethod != http.MethodPost {
+		t.Fatalf("request = %s %s, want POST /api/v1/companions/7/presence/sleep", gotMethod, gotPath)
+	}
+	if !strings.Contains(out, "Companion 7 is asleep.") {
+		t.Errorf("output lacks the success line:\n%s", out)
+	}
+}

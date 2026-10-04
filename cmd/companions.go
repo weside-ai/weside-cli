@@ -476,6 +476,110 @@ var companionsIdentityCmd = &cobra.Command{
 	},
 }
 
+// companionsDayCmd reads the companion's day ring (WA-2421): its last 24 hours
+// as arcs (talked, dreaming, reached_out, own_time) and dots (remembered,
+// acted), times and kinds only. Owner-only; anyone else gets the 404.
+var companionsDayCmd = &cobra.Command{
+	Use:   "day <id|name>",
+	Short: "Show what a companion did in the last 24 hours",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+		companionID, err := resolveCompanionID(client, args[0])
+		if err != nil {
+			return err
+		}
+
+		var result map[string]any
+		if err := client.Get(context.Background(), "/companions/"+companionID+"/day", &result); err != nil {
+			return fmt.Errorf("reading companion day: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		printCompanionDay(result)
+		return nil
+	},
+}
+
+// printCompanionDay renders the ring as one row per mark, in the owner's zone
+// the server already applied. A resting companion has no marks.
+func printCompanionDay(day map[string]any) {
+	fmt.Printf("Window:   %s → %s (%v)\n", clockTime(day["window_start"]), clockTime(day["window_end"]), day["timezone"])
+	if since, ok := day["resting_since"].(string); ok && since != "" {
+		fmt.Printf("Resting since %s\n", clockTime(since))
+	}
+	var rows [][]string
+	for _, item := range anySlice(day["arcs"]) {
+		arc, _ := item.(map[string]any)
+		detail := ""
+		if room, ok := arc["room_id"]; ok {
+			detail = fmt.Sprintf("room %v", room)
+		}
+		rows = append(rows, []string{"arc", fmt.Sprintf("%v", arc["kind"]), clockTime(arc["start"]) + "–" + clockTime(arc["end"]), detail})
+	}
+	for _, item := range anySlice(day["dots"]) {
+		dot, _ := item.(map[string]any)
+		detail := ""
+		if category, ok := dot["category"]; ok {
+			detail = fmt.Sprintf("%v", category)
+		}
+		rows = append(rows, []string{"dot", fmt.Sprintf("%v", dot["kind"]), clockTime(dot["at"]), detail})
+	}
+	ui.PrintTable([]string{"MARK", "KIND", "TIME", "DETAIL"}, rows)
+}
+
+// clockTime shortens an ISO-8601 instant to its date and wall-clock minute
+// ("2026-10-04 14:05"), keeping the offset-free local reading the server sent.
+func clockTime(value any) string {
+	s, _ := value.(string)
+	if len(s) < 16 {
+		return s
+	}
+	return strings.Replace(s[:16], "T", " ", 1)
+}
+
+func anySlice(value any) []any {
+	items, _ := value.([]any)
+	return items
+}
+
+// companionsSleepCmd puts a companion to sleep on the owner's instruction —
+// the counterpart of `companions resume`. Idempotent server-side: sleeping a
+// sleeping companion keeps its first `suspended_at`.
+var companionsSleepCmd = &cobra.Command{
+	Use:   "sleep <id|name>",
+	Short: "Put a companion to sleep",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := newAuthenticatedClient()
+		if err != nil {
+			return err
+		}
+		companionID, err := resolveCompanionID(client, args[0])
+		if err != nil {
+			return err
+		}
+
+		var result map[string]any
+		if err := client.Post(context.Background(), "/companions/"+companionID+"/presence/sleep", nil, &result); err != nil {
+			return fmt.Errorf("putting companion to sleep: %w", err)
+		}
+
+		if IsJSON() {
+			ui.PrintJSON(result)
+			return nil
+		}
+		ui.PrintSuccess("Companion %s is asleep.", args[0])
+		return nil
+	},
+}
+
 func init() {
 	companionsCreateCmd.Flags().StringVar(&compName, "name", "", "companion name")
 	companionsCreateCmd.Flags().StringVar(&compPersonality, "personality", "", "companion personality description")
@@ -499,6 +603,8 @@ func init() {
 	companionsCmd.AddCommand(companionsIdentityCmd)
 	companionsCmd.AddCommand(companionsUpdateCmd)
 	companionsCmd.AddCommand(companionsDeleteCmd)
+	companionsCmd.AddCommand(companionsDayCmd)
+	companionsCmd.AddCommand(companionsSleepCmd)
 	rootCmd.AddCommand(companionsCmd)
 }
 

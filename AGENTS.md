@@ -38,7 +38,7 @@ weside-cli/
 ├── cmd/                    # Cobra commands (1 file per command group)
 │   ├── root.go             # Root command + global flags + Viper init
 │   ├── auth.go             # auth login/logout/whoami/token
-│   ├── companions.go       # companions list/show/create/select/update/delete
+│   ├── companions.go       # companions list/show/create/select/update/delete/day/sleep
 │   ├── api.go              # api <METHOD> <path> — raw authenticated passthrough (debug)
 │   ├── chat.go             # chat (v2 rooms SSE: resolve DM room, subscribe, send)
 │   ├── rooms.go            # rooms list/show/mute/unmute/activity/delete (v2)
