@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/weside-ai/weside-cli/internal/api"
 )
@@ -546,19 +547,32 @@ func TestJSONOutputFormatting(t *testing.T) {
 	}
 }
 
-// --- day ring and sleep (WA-2421) ---
+// --- day ring, sleep and wake (WA-2421) ---
 
+// The arcs come before the dots on the wire; the output interleaves them by time.
 const dayBody = `{"window_start":"2026-10-03T14:05:00+02:00","window_end":"2026-10-04T14:05:00+02:00",` +
 	`"timezone":"Europe/Berlin","resting_since":null,` +
 	`"arcs":[{"kind":"dreaming","start":"2026-10-04T03:00:00+02:00","end":"2026-10-04T03:15:00+02:00"},` +
-	`{"kind":"talked","start":"2026-10-04T09:00:00+02:00","end":"2026-10-04T09:12:00+02:00","room_id":12}],` +
+	`{"kind":"talked","start":"2026-10-04T12:00:00+02:00","end":"2026-10-04T12:12:00+02:00","room_id":1234567}],` +
 	`"dots":[{"kind":"acted","at":"2026-10-04T10:30:00+02:00","category":"notes"},` +
 	`{"kind":"remembered","at":"2026-10-04T11:00:00+02:00"}]}`
 
-// TestCompanionsDayReadsTheRingAndPrintsEveryMark drives `companions day` by
+// humanOutput pins the table output for one test, whatever another test left set.
+func humanOutput(t *testing.T, apiURL string) {
+	t.Helper()
+	t.Setenv("WESIDE_TOKEN", "test-token")
+	viper.Set("api_url", apiURL)
+	viper.Set("json", false)
+	t.Cleanup(func() {
+		viper.Set("api_url", "")
+		viper.Set("json", false)
+	})
+}
+
+// TestCompanionsDayReadsTheRingAndPrintsOneTimeline drives `companions day` by
 // name: the name resolves through the list, the ring is read from
-// /companions/{id}/day, and every arc and dot is one row with its detail.
-func TestCompanionsDayReadsTheRingAndPrintsEveryMark(t *testing.T) {
+// /companions/{id}/day, and every arc and dot is one row, in time order.
+func TestCompanionsDayReadsTheRingAndPrintsOneTimeline(t *testing.T) {
 	var gotPath, gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -573,9 +587,7 @@ func TestCompanionsDayReadsTheRingAndPrintsEveryMark(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("WESIDE_TOKEN", "test-token")
-	viper.Set("api_url", srv.URL)
-	defer viper.Set("api_url", "")
+	humanOutput(t, srv.URL)
 
 	out := captureStdout(t, func() error {
 		return companionsDayCmd.RunE(companionsDayCmd, []string{"Nox"})
@@ -584,13 +596,24 @@ func TestCompanionsDayReadsTheRingAndPrintsEveryMark(t *testing.T) {
 	if gotPath != "/api/v1/companions/7/day" || gotMethod != http.MethodGet {
 		t.Fatalf("request = %s %s, want GET /api/v1/companions/7/day", gotMethod, gotPath)
 	}
-	for _, want := range []string{
-		"Europe/Berlin",
-		"dreaming", "2026-10-04 03:00–2026-10-04 03:15",
-		"talked", "room 12",
-		"acted", "notes",
-		"remembered", "2026-10-04 11:00",
-	} {
+	order := []string{
+		"2026-10-04 03:00 +02:00 – 2026-10-04 03:15 +02:00",
+		"2026-10-04 10:30 +02:00",
+		"2026-10-04 11:00 +02:00",
+		"2026-10-04 12:00 +02:00 – 2026-10-04 12:12 +02:00",
+	}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(out, want)
+		if at < 0 {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+		if at < last {
+			t.Errorf("%q is out of time order:\n%s", want, out)
+		}
+		last = at
+	}
+	for _, want := range []string{"Europe/Berlin", "room 1234567", "notes", "remembered"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -602,6 +625,7 @@ func TestCompanionsDayReadsTheRingAndPrintsEveryMark(t *testing.T) {
 
 // TestCompanionsDayResting prints the resting line and no marks.
 func TestCompanionsDayResting(t *testing.T) {
+	humanOutput(t, "")
 	out := captureStdout(t, func() error {
 		printCompanionDay(map[string]any{
 			"window_start":  "2026-10-03T14:05:00+02:00",
@@ -614,11 +638,35 @@ func TestCompanionsDayResting(t *testing.T) {
 		return nil
 	})
 
-	if !strings.Contains(out, "Resting since 2026-10-02 22:10") {
+	if !strings.Contains(out, "Resting since 2026-10-02 22:10 +02:00") {
 		t.Errorf("output lacks the resting line:\n%s", out)
 	}
 	if !strings.Contains(out, "(no results)") {
 		t.Errorf("a resting companion printed marks:\n%s", out)
+	}
+}
+
+// TestClockTimeKeepsTheOffsetOfARepeatedHour: on the fall-back night 02:30
+// happens twice, and the two marks must not print alike.
+func TestClockTimeKeepsTheOffsetOfARepeatedHour(t *testing.T) {
+	first := clockTime("2026-10-25T02:30:00+02:00")
+	second := clockTime("2026-10-25T02:30:00+01:00")
+
+	if first == second {
+		t.Fatalf("both print %q", first)
+	}
+	if got := clockTime("not a time"); got != "not a time" {
+		t.Errorf("clockTime(garbage) = %q, want it unchanged", got)
+	}
+}
+
+// TestNumberTextNeverPrintsAnExponent: a decoded JSON number is a float64.
+func TestNumberTextNeverPrintsAnExponent(t *testing.T) {
+	if got := numberText(float64(1234567)); got != "1234567" {
+		t.Errorf("numberText(1234567) = %q", got)
+	}
+	if got := numberText(float64(1000000)); got != "1000000" {
+		t.Errorf("numberText(1e6) = %q", got)
 	}
 }
 
@@ -630,9 +678,7 @@ func TestCompanionsDayNotFoundIsAnError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"detail":"Companion with ID 9 not found."}`))
 	}))
 	defer srv.Close()
-	t.Setenv("WESIDE_TOKEN", "test-token")
-	viper.Set("api_url", srv.URL)
-	defer viper.Set("api_url", "")
+	humanOutput(t, srv.URL)
 
 	err := companionsDayCmd.RunE(companionsDayCmd, []string{"9"})
 
@@ -641,9 +687,9 @@ func TestCompanionsDayNotFoundIsAnError(t *testing.T) {
 	}
 }
 
-// TestCompanionsSleepPostsToPresenceSleep checks the verb, the path and the
-// success line of `companions sleep`.
-func TestCompanionsSleepPostsToPresenceSleep(t *testing.T) {
+// TestPresenceVerbsPostToTheirEndpoints checks the verb, the path and the
+// success line of `companions sleep --confirm` and `companions wake`.
+func TestPresenceVerbsPostToTheirEndpoints(t *testing.T) {
 	var gotPath, gotMethod string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
@@ -651,18 +697,47 @@ func TestCompanionsSleepPostsToPresenceSleep(t *testing.T) {
 		_, _ = w.Write([]byte(`{"companion_id":7}`))
 	}))
 	defer srv.Close()
-	t.Setenv("WESIDE_TOKEN", "test-token")
-	viper.Set("api_url", srv.URL)
-	defer viper.Set("api_url", "")
+	humanOutput(t, srv.URL)
+	compSleepConfirm = true
+	t.Cleanup(func() { compSleepConfirm = false })
 
-	out := captureStdout(t, func() error {
-		return companionsSleepCmd.RunE(companionsSleepCmd, []string{"7"})
-	})
-
-	if gotPath != "/api/v1/companions/7/presence/sleep" || gotMethod != http.MethodPost {
-		t.Fatalf("request = %s %s, want POST /api/v1/companions/7/presence/sleep", gotMethod, gotPath)
+	cases := []struct {
+		cmd      *cobra.Command
+		wantPath string
+		wantLine string
+	}{
+		{companionsSleepCmd, "/api/v1/companions/7/presence/sleep", "Companion 7 is asleep."},
+		{companionsWakeCmd, "/api/v1/companions/7/presence/wake", "Companion 7 is awake."},
 	}
-	if !strings.Contains(out, "Companion 7 is asleep.") {
-		t.Errorf("output lacks the success line:\n%s", out)
+	for _, tc := range cases {
+		out := captureStdout(t, func() error { return tc.cmd.RunE(tc.cmd, []string{"7"}) })
+
+		if gotPath != tc.wantPath || gotMethod != http.MethodPost {
+			t.Errorf("request = %s %s, want POST %s", gotMethod, gotPath, tc.wantPath)
+		}
+		if !strings.Contains(out, tc.wantLine) {
+			t.Errorf("output lacks %q:\n%s", tc.wantLine, out)
+		}
+	}
+}
+
+// TestCompanionsSleepNeedsConfirm sends nothing without --confirm.
+func TestCompanionsSleepNeedsConfirm(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	humanOutput(t, srv.URL)
+	compSleepConfirm = false
+
+	err := companionsSleepCmd.RunE(companionsSleepCmd, []string{"7"})
+
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("err = %v, want the --confirm refusal", err)
+	}
+	if called {
+		t.Error("sleep reached the server without --confirm")
 	}
 }

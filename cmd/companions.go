@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/api"
@@ -430,7 +432,7 @@ func resolveCompanionID(client *api.Client, nameOrID string) (string, error) {
 	for _, item := range companions {
 		c, _ := item.(map[string]any)
 		if fmt.Sprintf("%v", c["name"]) == nameOrID {
-			return fmt.Sprintf("%v", c["id"]), nil
+			return numberText(c["id"]), nil
 		}
 	}
 
@@ -480,15 +482,15 @@ var companionsIdentityCmd = &cobra.Command{
 // as arcs (talked, dreaming, reached_out, own_time) and dots (remembered,
 // acted), times and kinds only. Owner-only; anyone else gets the 404.
 var companionsDayCmd = &cobra.Command{
-	Use:   "day <id|name>",
+	Use:   "day [id|name]",
 	Short: "Show what a companion did in the last 24 hours",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := newAuthenticatedClient()
+		companionID, err := resolveCompanion(firstArg(args))
 		if err != nil {
 			return err
 		}
-		companionID, err := resolveCompanionID(client, args[0])
+		client, err := newAuthenticatedClient()
 		if err != nil {
 			return err
 		}
@@ -507,77 +509,131 @@ var companionsDayCmd = &cobra.Command{
 	},
 }
 
-// printCompanionDay renders the ring as one row per mark, in the owner's zone
-// the server already applied. A resting companion has no marks.
+// dayRow is one mark of the ring as a table row, with the instant it sorts by.
+type dayRow struct {
+	at    string
+	cells []string
+}
+
+// printCompanionDay renders the ring as one timeline, a row per mark in time
+// order, every time in the owner's zone the server already applied (with its
+// offset, so the repeated hour of a DST night stays two hours). A resting
+// companion has no marks.
 func printCompanionDay(day map[string]any) {
-	fmt.Printf("Window:   %s → %s (%v)\n", clockTime(day["window_start"]), clockTime(day["window_end"]), day["timezone"])
+	ui.Printf("Window:   %s → %s (%v)\n", clockTime(day["window_start"]), clockTime(day["window_end"]), day["timezone"])
 	if since, ok := day["resting_since"].(string); ok && since != "" {
-		fmt.Printf("Resting since %s\n", clockTime(since))
+		ui.Printf("Resting since %s\n", clockTime(since))
 	}
-	var rows [][]string
-	for _, item := range anySlice(day["arcs"]) {
+	var marks []dayRow
+	for _, item := range asSlice(day["arcs"]) {
 		arc, _ := item.(map[string]any)
 		detail := ""
 		if room, ok := arc["room_id"]; ok {
-			detail = fmt.Sprintf("room %v", room)
+			detail = "room " + numberText(room)
 		}
-		rows = append(rows, []string{"arc", fmt.Sprintf("%v", arc["kind"]), clockTime(arc["start"]) + "–" + clockTime(arc["end"]), detail})
+		start, _ := arc["start"].(string)
+		marks = append(marks, dayRow{start, []string{"arc", fmt.Sprintf("%v", arc["kind"]), clockTime(arc["start"]) + " – " + clockTime(arc["end"]), detail}})
 	}
-	for _, item := range anySlice(day["dots"]) {
+	for _, item := range asSlice(day["dots"]) {
 		dot, _ := item.(map[string]any)
 		detail := ""
 		if category, ok := dot["category"]; ok {
 			detail = fmt.Sprintf("%v", category)
 		}
-		rows = append(rows, []string{"dot", fmt.Sprintf("%v", dot["kind"]), clockTime(dot["at"]), detail})
+		at, _ := dot["at"].(string)
+		marks = append(marks, dayRow{at, []string{"dot", fmt.Sprintf("%v", dot["kind"]), clockTime(dot["at"]), detail}})
+	}
+	sort.SliceStable(marks, func(i, j int) bool { return instant(marks[i].at).Before(instant(marks[j].at)) })
+	rows := make([][]string, len(marks))
+	for i, mark := range marks {
+		rows[i] = mark.cells
 	}
 	ui.PrintTable([]string{"MARK", "KIND", "TIME", "DETAIL"}, rows)
 }
 
-// clockTime shortens an ISO-8601 instant to its date and wall-clock minute
-// ("2026-10-04 14:05"), keeping the offset-free local reading the server sent.
+// instant parses an RFC 3339 time; an unparsable one sorts first.
+func instant(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
+}
+
+// clockTime renders an RFC 3339 instant as "2026-10-04 14:05 +02:00": the
+// owner's wall clock with its offset. Anything else is returned unchanged.
 func clockTime(value any) string {
 	s, _ := value.(string)
-	if len(s) < 16 {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
 		return s
 	}
-	return strings.Replace(s[:16], "T", " ", 1)
+	return t.Format("2006-01-02 15:04 -07:00")
 }
 
-func anySlice(value any) []any {
-	items, _ := value.([]any)
-	return items
+// numberText renders a JSON number as an integer — a decoded float64 prints
+// in exponent form from one million up under %v.
+func numberText(value any) string {
+	if f, ok := value.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprintf("%v", value)
 }
 
-// companionsSleepCmd puts a companion to sleep on the owner's instruction —
-// the counterpart of `companions resume`. Idempotent server-side: sleeping a
-// sleeping companion keeps its first `suspended_at`.
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+var compSleepConfirm bool
+
+// companionsSleepCmd puts a companion to sleep on the owner's instruction
+// (POST /companions/{id}/presence/sleep). Idempotent server-side: sleeping a
+// sleeping companion keeps its first `suspended_at`. Its counterpart is
+// `companions wake`.
 var companionsSleepCmd = &cobra.Command{
-	Use:   "sleep <id|name>",
-	Short: "Put a companion to sleep",
-	Args:  cobra.ExactArgs(1),
+	Use:   "sleep [id|name]",
+	Short: "Put a companion to sleep (pauses its proactive wakes)",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := newAuthenticatedClient()
-		if err != nil {
-			return err
+		if !compSleepConfirm {
+			return fmt.Errorf("this puts the companion to sleep and pauses its triggers and wakes — pass --confirm to proceed")
 		}
-		companionID, err := resolveCompanionID(client, args[0])
-		if err != nil {
-			return err
-		}
-
-		var result map[string]any
-		if err := client.Post(context.Background(), "/companions/"+companionID+"/presence/sleep", nil, &result); err != nil {
-			return fmt.Errorf("putting companion to sleep: %w", err)
-		}
-
-		if IsJSON() {
-			ui.PrintJSON(result)
-			return nil
-		}
-		ui.PrintSuccess("Companion %s is asleep.", args[0])
-		return nil
+		return postPresence(firstArg(args), "sleep", "Companion %s is asleep.")
 	},
+}
+
+// companionsWakeCmd wakes a companion the owner put to sleep
+// (POST /companions/{id}/presence/wake). Unlike `companions resume`, the wake
+// counts as the owner's own turn, so the daily sleep sweep does not put the
+// companion straight back to sleep.
+var companionsWakeCmd = &cobra.Command{
+	Use:   "wake [id|name]",
+	Short: "Wake a companion you put to sleep",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		return postPresence(firstArg(args), "wake", "Companion %s is awake.")
+	},
+}
+
+func postPresence(nameOrID, verb, done string) error {
+	companionID, err := resolveCompanion(nameOrID)
+	if err != nil {
+		return err
+	}
+	client, err := newAuthenticatedClient()
+	if err != nil {
+		return err
+	}
+	var result map[string]any
+	if err := client.Post(context.Background(), "/companions/"+companionID+"/presence/"+verb, nil, &result); err != nil {
+		return fmt.Errorf("%s companion: %w", verb, err)
+	}
+	if IsJSON() {
+		ui.PrintJSON(result)
+		return nil
+	}
+	ui.PrintSuccess(done, companionID)
+	return nil
 }
 
 func init() {
@@ -595,6 +651,7 @@ func init() {
 	companionsUpdateCmd.Flags().BoolVar(&compUpdateUnpublish, "unpublish", false, "unpublish companion from Experts/Circle")
 
 	companionsDeleteCmd.Flags().BoolVarP(&compDeleteYes, "yes", "y", false, "confirm deletion without prompt")
+	companionsSleepCmd.Flags().BoolVar(&compSleepConfirm, "confirm", false, "confirm putting the companion to sleep")
 
 	companionsCmd.AddCommand(companionsListCmd)
 	companionsCmd.AddCommand(companionsShowCmd)
@@ -605,6 +662,7 @@ func init() {
 	companionsCmd.AddCommand(companionsDeleteCmd)
 	companionsCmd.AddCommand(companionsDayCmd)
 	companionsCmd.AddCommand(companionsSleepCmd)
+	companionsCmd.AddCommand(companionsWakeCmd)
 	rootCmd.AddCommand(companionsCmd)
 }
 
