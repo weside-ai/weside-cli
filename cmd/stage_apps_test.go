@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/weside-ai/weside-cli/internal/api"
@@ -153,5 +154,31 @@ func TestStageAppVerbsAreRegistered(t *testing.T) {
 		if err != nil || cmd.Name() != path[len(path)-1] {
 			t.Errorf("%v not registered (found %v, err %v)", path, cmd.Name(), err)
 		}
+	}
+}
+
+// Keys and values come from any member a share lets write; a control sequence
+// in them must reach the terminal escaped. Also pins the plain-output branches.
+func TestPrintAppDataRendersEscaped(t *testing.T) {
+	tests := []struct {
+		name, key string
+		result    map[string]any
+		want      string
+	}{
+		{"no keys", "", map[string]any{"keys": []any{}}, "This app holds no data yet.\n"},
+		{"key list", "", map[string]any{"keys": []any{"scores", "evil\x1b]52;c;x\x07"}}, "scores\n"},
+		{"unset key", "k", map[string]any{"exists": false}, "Key k is not set.\n"},
+		{"value", "k", map[string]any{"exists": true, "revision": 3, "value": map[string]any{"a": 1}}, "k (revision 3)\n{\n  \"a\": 1\n}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := captureStdout(t, func() error { printAppData(tt.result, tt.key); return nil })
+			if strings.ContainsRune(out, '\x1b') || strings.ContainsRune(out, '\x07') {
+				t.Fatalf("raw control character reached stdout: %q", out)
+			}
+			if !strings.HasPrefix(out, tt.want) {
+				t.Fatalf("output %q, want prefix %q", out, tt.want)
+			}
+		})
 	}
 }

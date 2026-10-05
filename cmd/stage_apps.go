@@ -167,25 +167,31 @@ Examples:
 			ui.PrintJSON(result)
 			return nil
 		}
-		if stageDataKey == "" {
-			keys, _ := result["keys"].([]any)
-			if len(keys) == 0 {
-				ui.Println("This app holds no data yet.")
-				return nil
-			}
-			for _, k := range keys {
-				ui.Println(fmt.Sprintf("%v", k))
-			}
-			return nil
-		}
-		if exists, _ := result["exists"].(bool); !exists {
-			ui.Printf("Key %s is not set.\n", stageDataKey)
-			return nil
-		}
-		value, _ := json.MarshalIndent(result["value"], "", "  ")
-		ui.Printf("%s (revision %v)\n%s\n", stageDataKey, result["revision"], value)
+		printAppData(result, stageDataKey)
 		return nil
 	},
+}
+
+// printAppData renders an app_data_read answer. Keys and values are written by
+// any member a share lets write, so every line goes through ui.SafeText.
+func printAppData(result map[string]any, key string) {
+	if key == "" {
+		keys, _ := result["keys"].([]any)
+		if len(keys) == 0 {
+			ui.Println("This app holds no data yet.")
+			return
+		}
+		for _, k := range keys {
+			ui.Println(ui.SafeText(fmt.Sprintf("%v", k)))
+		}
+		return
+	}
+	if exists, _ := result["exists"].(bool); !exists {
+		ui.Printf("Key %s is not set.\n", ui.SafeText(key))
+		return
+	}
+	value, _ := json.MarshalIndent(result["value"], "", "  ")
+	ui.Printf("%s (revision %v)\n%s\n", ui.SafeText(key), result["revision"], ui.SafeText(string(value)))
 }
 
 var stageDataSetCmd = &cobra.Command{
@@ -306,7 +312,11 @@ Examples:
 var stageUnshareCmd = &cobra.Command{
 	Use:   "unshare <artifact_id>",
 	Short: "Stop sharing an app into a room",
-	Args:  cobra.ExactArgs(1),
+	Long: `Stop sharing an app you own into a room; its members lose access.
+
+Example:
+  weside stage unshare 812 --room 42`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		roomID, err := requiredRoom(stageUnshareRoom)
 		if err != nil {
@@ -328,7 +338,12 @@ var stageUnshareCmd = &cobra.Command{
 var roomsAppsCmd = &cobra.Command{
 	Use:   "apps <room_id>",
 	Short: "List the apps shared into a room that you may open",
-	Args:  cobra.ExactArgs(1),
+	Long: `List the apps shared into a room that you may open, with the artifact id
+the room's Stage opens.
+
+Example:
+  weside rooms apps 42 --json`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		roomID, err := strconv.Atoi(args[0])
 		if err != nil || roomID <= 0 {
@@ -357,7 +372,7 @@ var roomsAppsCmd = &cobra.Command{
 			rows = append(rows, []string{
 				fmt.Sprintf("%v", a["artifact_id"]),
 				truncate(ui.SafeText(fmt.Sprintf("%v", a["title"])), 40),
-				fmt.Sprintf("%v", a["kind"]),
+				ui.SafeText(fmt.Sprintf("%v", a["kind"])),
 				ui.SafeText(fmt.Sprintf("%v", a["companion_name"])),
 			})
 		}
@@ -380,7 +395,7 @@ func init() {
 
 	stageDataSetCmd.Flags().StringVar(&stageDataSetKey, "key", "", "the key to write (required)")
 	stageDataSetCmd.Flags().StringVar(&stageDataSetValue, "value", "", "JSON value: inline, @file, or - for stdin; null deletes (required)")
-	stageDataSetCmd.Flags().IntVar(&stageDataSetRev, "expected-revision", 0, "write only while the key has this revision (0 = unset)")
+	stageDataSetCmd.Flags().IntVar(&stageDataSetRev, "expected-revision", 0, "write only while the key has this revision (0 = the key must not exist yet)")
 	stageDataSetCmd.Flags().StringVar(&stageDataSetRoom, "room", "", "write as a member of this room (shared app)")
 	_ = stageDataSetCmd.MarkFlagRequired("key")
 	_ = stageDataSetCmd.MarkFlagRequired("value")
