@@ -200,7 +200,7 @@ var stageDataSetCmd = &cobra.Command{
 	Long: `Write one key through app_data_write.
 
 --value is any JSON value (inline, @file, or - for stdin); null deletes the key.
---expected-revision writes only while the key still has that revision (0 = unset);
+--expected-revision writes only while the key still has that revision (0 = the key must not exist yet);
 a mismatch answers 409 app-data-conflict.
 
 Examples:
