@@ -56,13 +56,13 @@ type ResolveResult struct {
 
 const (
 	defaultSupabaseURL = "https://pqykrwpmhjqjhpsnjxbd.supabase.co"
-	// defaultSupabaseAnonKey is the project's public anon key (JWT claim
-	// `role: anon`). Public by spec — Supabase ships it in every web and mobile
-	// client; access is bounded by RLS, not by the key staying secret. GitHub
-	// secret scanning flags it as a "password"; that is a false positive, and
-	// the value has to stay hardcoded because it is the last fallback in the
-	// Resolve() chain when /.well-known/weside-auth is unreachable.
-	defaultSupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxeWtyd3BtaGpxamhwc25qeGJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk5ODU3NDksImV4cCI6MjA4NTU2MTc0OX0.ADx_HD7O-xNMx-j4MDrhaJbRO71R-hJO6yTcf5wFWUA"
+	// defaultSupabaseAnonKey is the prod project's publishable key
+	// (`sb_publishable_…`, WA-2427). Public by design — every web and mobile
+	// client ships it; access is bounded by RLS. It stays hardcoded because it
+	// is the last fallback in the Resolve() chain when
+	// /.well-known/weside-auth is unreachable. The legacy anon JWT it replaced
+	// is switched off and answers 401.
+	defaultSupabaseAnonKey = "sb_publishable_sk_JKUIKstoL_8UK_NGrfQ_pbq551Vd"
 	defaultCallbackPort    = 18520
 	defaultMCPURL          = "https://api.weside.ai/mcp/"
 	// defaultOAuthClientID is the public PKCE OAuth client registered for the
@@ -225,6 +225,12 @@ func loadCachedAuth(apiURL string) (*Config, bool) {
 	if url == "" || key == "" || port == 0 || mcp == "" {
 		return nil, false
 	}
+	// A cached legacy anon JWT (`eyJ…`) was switched off on 2026-10-06
+	// (WA-2427) and answers 401: treat it as a miss so Resolve re-fetches the
+	// publishable key from the well-known endpoint and rewrites the cache.
+	if isLegacyJWTKey(key) {
+		return nil, false
+	}
 	clientID := strings.TrimSpace(viper.GetString("auth.oauth_client_id"))
 	if clientID == "" {
 		clientID = defaultOAuthClientID
@@ -283,4 +289,10 @@ func defaultConfig() *Config {
 		MCPURL:          defaultMCPURL,
 		OAuthClientID:   defaultOAuthClientID,
 	}
+}
+
+// isLegacyJWTKey reports whether key is a legacy Supabase JWT key rather than
+// an `sb_publishable_` key. Pinned by TestResolve_CachedLegacyJWTIsRefetched.
+func isLegacyJWTKey(key string) bool {
+	return strings.HasPrefix(key, "eyJ")
 }

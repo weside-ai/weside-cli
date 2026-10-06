@@ -267,3 +267,38 @@ func TestResolve_LegacyCacheWithoutAPIURLIsMiss(t *testing.T) {
 		t.Error("live re-fetch should upgrade the cache with api_url")
 	}
 }
+
+// WA-2427: the legacy anon JWT answers 401 since the switch-off, so a cache
+// holding one must re-fetch instead of serving a dead key.
+func TestResolve_CachedLegacyJWTIsRefetched(t *testing.T) {
+	resetAuthState(t)
+
+	srv := httptest.NewServer(goodWellKnownHandler(t))
+	defer srv.Close()
+
+	viper.Set("auth.supabase_url", "https://cached.supabase.co")
+	viper.Set("auth.supabase_anon_key", "eyJhbGciOiJIUzI1NiJ9.legacy.sig")
+	viper.Set("auth.callback_port", 28520)
+	viper.Set("auth.mcp_url", "https://cached.example/mcp/")
+	viper.Set("auth.api_url", srv.URL)
+	viper.Set("auth.fetched_at", time.Now().UTC().Format(time.RFC3339))
+
+	res := auth.Resolve(context.Background(), srv.URL)
+	if res.Source != auth.SourceLive {
+		t.Fatalf("source = %q, want %q (a cached legacy JWT must re-fetch)", res.Source, auth.SourceLive)
+	}
+	if strings.HasPrefix(viper.GetString("auth.supabase_anon_key"), "eyJ") {
+		t.Error("live re-fetch should overwrite the cached legacy JWT")
+	}
+}
+
+func TestResolve_FallbackKeyIsPublishable(t *testing.T) {
+	resetAuthState(t)
+	res := auth.Resolve(context.Background(), "http://127.0.0.1:1")
+	if res.Source != auth.SourceFallback {
+		t.Fatalf("source = %q, want %q", res.Source, auth.SourceFallback)
+	}
+	if !strings.HasPrefix(res.Config.SupabaseAnonKey, "sb_publishable_") {
+		t.Errorf("fallback key is not a publishable key (prefix %.4q)", res.Config.SupabaseAnonKey)
+	}
+}
