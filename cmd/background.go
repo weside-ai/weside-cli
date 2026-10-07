@@ -3,12 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
-var backgroundAll bool
+var (
+	backgroundAll           bool
+	backgroundCancelConfirm bool
+)
 
 var backgroundCmd = &cobra.Command{
 	Use:   "background",
@@ -24,8 +28,8 @@ var backgroundListCmd = &cobra.Command{
 	Short: "List a companion's background work (--all: every companion)",
 	Args:  cobra.RangeArgs(0, 1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		if !backgroundAll && len(args) == 0 {
-			return fmt.Errorf("name a companion, or pass --all for every companion")
+		if backgroundAll == (len(args) == 1) {
+			return fmt.Errorf("name a companion, or pass --all for every companion — not both")
 		}
 		path := "/me/background"
 		if !backgroundAll {
@@ -58,6 +62,9 @@ var backgroundCancelCmd = &cobra.Command{
 	Short: "Cancel one item: a reminder for good, a routine switched off",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
+		if !backgroundCancelConfirm {
+			return fmt.Errorf("cancelling %s may remove it for good — pass --confirm to proceed", args[1])
+		}
 		companionID, err := resolveCompanion(args[0])
 		if err != nil {
 			return err
@@ -68,7 +75,7 @@ var backgroundCancelCmd = &cobra.Command{
 		}
 
 		var result map[string]any
-		path := "/companions/" + companionID + "/background/" + args[1] + "/cancel"
+		path := "/companions/" + companionID + "/background/" + url.PathEscape(args[1]) + "/cancel"
 		if err := client.Post(context.Background(), path, nil, &result); err != nil {
 			return fmt.Errorf("cancelling %s: %w", args[1], err)
 		}
@@ -94,7 +101,11 @@ func printBackground(result map[string]any) {
 		item, _ := raw.(map[string]any)
 		next := "-"
 		if nf, ok := item["next_fire"].(map[string]any); ok {
-			next = fmt.Sprintf("%s (%v)", clockTime(nf["at"]), nf["basis"])
+			basis := "-"
+			if b, ok := nf["basis"].(string); ok && b != "" {
+				basis = b
+			}
+			next = fmt.Sprintf("%s (%s)", clockTime(nf["at"]), basis)
 		}
 		by := "-"
 		if cb, ok := item["created_by"].(map[string]any); ok {
@@ -121,6 +132,7 @@ func printBackground(result map[string]any) {
 
 func init() {
 	backgroundListCmd.Flags().BoolVar(&backgroundAll, "all", false, "every companion you own")
+	backgroundCancelCmd.Flags().BoolVar(&backgroundCancelConfirm, "confirm", false, "confirm the cancel")
 	backgroundCmd.AddCommand(backgroundListCmd)
 	backgroundCmd.AddCommand(backgroundCancelCmd)
 	rootCmd.AddCommand(backgroundCmd)

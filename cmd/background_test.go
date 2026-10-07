@@ -91,6 +91,7 @@ func TestBackgroundCancelPostsAndSaysWhatHappened(t *testing.T) {
 		{"reminder:41", "occurrence", "it will not run"},
 		{"dreaming:7", "definition_off", "Switched dreaming:7 off"},
 	} {
+		confirmCancel(t)
 		var gotPath, gotMethod string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath, gotMethod = r.URL.Path, r.Method
@@ -122,10 +123,84 @@ func TestBackgroundCancelSurfacesARefusal(t *testing.T) {
 	}))
 	defer srv.Close()
 	humanOutput(t, srv.URL)
+	confirmCancel(t)
 
 	err := backgroundCancelCmd.RunE(backgroundCancelCmd, []string{"7", "reminder:41"})
 
 	if err == nil || !strings.Contains(err.Error(), "cancelling reminder:41") {
 		t.Fatalf("err = %v, want a wrapped 409", err)
+	}
+}
+
+func confirmCancel(t *testing.T) {
+	t.Helper()
+	backgroundCancelConfirm = true
+	t.Cleanup(func() { backgroundCancelConfirm = false })
+}
+
+// TestBackgroundListRefusesACompanionWithAll: --all and a name contradict
+// each other; refuse instead of silently dropping the name.
+func TestBackgroundListRefusesACompanionWithAll(t *testing.T) {
+	backgroundAll = true
+	t.Cleanup(func() { backgroundAll = false })
+	err := backgroundListCmd.RunE(backgroundListCmd, []string{"Nox"})
+	if err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("err = %v, want the not-both refusal", err)
+	}
+}
+
+// TestBackgroundListShowsADashForAMissingBasis: no "(<nil>)" in the NEXT cell.
+func TestBackgroundListShowsADashForAMissingBasis(t *testing.T) {
+	out := captureStdout(t, func() error {
+		printBackground(map[string]any{"items": []any{map[string]any{
+			"id": "reminder:1", "kind": "reminder", "companion_id": 7.0, "status": "pending",
+			"next_fire": map[string]any{"at": "2026-10-08T09:00:00+02:00"},
+		}}})
+		return nil
+	})
+	if strings.Contains(out, "<nil>") || !strings.Contains(out, "09:00 +02:00 (-)") {
+		t.Fatalf("missing basis not rendered as a dash:\n%s", out)
+	}
+}
+
+// TestBackgroundCancelNeedsConfirm refuses before any request: an occurrence
+// is gone for good.
+func TestBackgroundCancelNeedsConfirm(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	humanOutput(t, srv.URL)
+	backgroundCancelConfirm = false
+
+	err := backgroundCancelCmd.RunE(backgroundCancelCmd, []string{"7", "reminder:41"})
+
+	if err == nil || !strings.Contains(err.Error(), "--confirm") || requests != 0 {
+		t.Fatalf("err = %v, requests = %d; want a --confirm refusal before any request", err, requests)
+	}
+}
+
+// TestBackgroundCancelKeepsTheItemIDOneSegment: an id carrying "/" or "?"
+// must not change which route the POST reaches.
+func TestBackgroundCancelKeepsTheItemIDOneSegment(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// EscapedPath, not Path: Path decodes %2F back to a slash.
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"x","effect":"occurrence"}`))
+	}))
+	defer srv.Close()
+	humanOutput(t, srv.URL)
+	confirmCancel(t)
+
+	captureStdout(t, func() error {
+		return backgroundCancelCmd.RunE(backgroundCancelCmd, []string{"7", "a/b?c"})
+	})
+
+	if gotPath != "/api/v1/companions/7/background/a%2Fb%3Fc/cancel" {
+		t.Fatalf("item id escaped its segment: %q", gotPath)
 	}
 }

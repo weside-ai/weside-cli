@@ -55,7 +55,7 @@ weside-cli/
 │   ├── skills.go           # companions skills list/available/install/set/uninstall
 │   ├── prompts.go          # companions resume/prompts versions/show/restore, identity show/set, tools list/set
 │   ├── triggers.go         # triggers list/toggle/set/delete
-│   ├── background.go       # background list [--all]/cancel — the owner's background register (WA-2447)
+│   ├── background.go       # background list <companion>|--all / cancel --confirm — the owner's background register (WA-2447)
 │   ├── memories.go         # memories search/list/save
 │   ├── memories_edit.go    # memories get/delete/update/edit
 │   ├── goals.go            # goals list/update/save
