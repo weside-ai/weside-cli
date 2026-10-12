@@ -181,7 +181,7 @@ func TestCompanionsTimelineTimeView(t *testing.T) {
 
 	out := runTimeline(t, "Nox")
 
-	assertInOrder(t, out, "Guten Morgen Nox", `[memory journal "Morgen"] 2026-10-03`, "You", "notes_write failed", "web_search ok", "pending_tool …")
+	assertInOrder(t, out, "Guten Morgen Nox", `[memory journal "Morgen"] 2026-10-03`, "companion (self)", "notes_write failed", "web_search ok", "pending_tool …")
 	if strings.Contains(out, "never shown") || strings.Contains(out, "future_kind") {
 		t.Errorf("an unknown kind was printed:\n%s", out)
 	}
@@ -321,6 +321,37 @@ func TestCompanionsTimelineRejectsFlagsLocally(t *testing.T) {
 				t.Errorf("%d request(s) sent for an invalid flag", n)
 			}
 		})
+	}
+}
+
+// TestCompanionsTimelineRejectsAReversedRange refuses --since after --until
+// before any request.
+func TestCompanionsTimelineRejectsAReversedRange(t *testing.T) {
+	resetTimelineFlags(t)
+	srv, _, calls := timelineServer(t, timelineBody, http.StatusOK)
+	humanOutput(t, srv.URL)
+	setTimelineFlag(t, "since", "2026-10-05")
+	setTimelineFlag(t, "until", "2026-10-04")
+
+	err := companionsTimelineCmd.RunE(companionsTimelineCmd, []string{"Nox"})
+
+	if err == nil || !strings.Contains(err.Error(), "is after --until") {
+		t.Fatalf("err = %v, want the reversed-range error", err)
+	}
+	if n := atomic.LoadInt32(calls); n != 0 {
+		t.Errorf("%d request(s) sent for a reversed range", n)
+	}
+}
+
+// TestTimelineEntryRowUnparseableAt files an entry without a readable time
+// under "unknown day", never under an empty section title.
+func TestTimelineEntryRowUnparseableAt(t *testing.T) {
+	row, ok := timelineEntryRow(map[string]any{
+		"kind": "message", "at": "not-a-time", "text": "x",
+		"sender": map[string]any{"kind": "human", "display_name": "Foxy"},
+	})
+	if !ok || row.day != "unknown day" {
+		t.Fatalf("row.day = %q (ok %v), want \"unknown day\"", row.day, ok)
 	}
 }
 

@@ -111,6 +111,13 @@ func readTimelineFlags(cmd *cobra.Command) (timelineFlags, error) {
 	if f.until, err = parseTimelineTime(tlUntil, true); err != nil {
 		return f, fmt.Errorf("--until: %w", err)
 	}
+	if f.since != "" && f.until != "" {
+		since, _ := time.Parse(time.RFC3339Nano, f.since)
+		until, _ := time.Parse(time.RFC3339Nano, f.until)
+		if since.After(until) {
+			return f, fmt.Errorf("--since %s is after --until %s", f.since, f.until)
+		}
+	}
 	if cmd.Flags().Changed("limit") {
 		if tlLimit < 1 || tlLimit > 200 {
 			return f, fmt.Errorf("--limit must be between 1 and 200, got %d", tlLimit)
@@ -283,6 +290,7 @@ func timelineEntryRow(entry map[string]any) (timelineRow, bool) {
 		roomTitle: str("room_title"),
 		roomKind:  str("room_kind"),
 	}
+	row.day = "unknown day"
 	if at, err := time.Parse(time.RFC3339Nano, str("at")); err == nil {
 		row.day = at.UTC().Format("2006-01-02")
 	}
@@ -297,7 +305,8 @@ func timelineEntryRow(entry map[string]any) (timelineRow, bool) {
 		label = "message"
 		sender, _ := entry["sender"].(map[string]any)
 		if sender["kind"] == "self" {
-			from = "You"
+			// The companion's own line. Not "You": the reader is its owner.
+			from = "companion (self)"
 		} else {
 			from, _ = sender["display_name"].(string)
 		}
