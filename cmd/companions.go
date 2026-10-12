@@ -663,6 +663,7 @@ func init() {
 	companionsCmd.AddCommand(companionsDayCmd)
 	companionsCmd.AddCommand(companionsSleepCmd)
 	companionsCmd.AddCommand(companionsWakeCmd)
+	companionsCmd.AddCommand(companionsTimelineCmd)
 	rootCmd.AddCommand(companionsCmd)
 }
 

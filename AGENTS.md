@@ -39,6 +39,7 @@ weside-cli/
 │   ├── root.go             # Root command + global flags + Viper init
 │   ├── auth.go             # auth login/logout/whoami/token
 │   ├── companions.go       # companions list/show/create/select/update/delete/day/sleep/wake
+│   ├── companions_timeline.go # companions timeline — the owner's timeline across rooms, memories, tool calls (WA-2410, v2)
 │   ├── api.go              # api <METHOD> <path> — raw authenticated passthrough (debug)
 │   ├── chat.go             # chat (v2 rooms SSE: resolve DM room, subscribe, send)
 │   ├── rooms.go            # rooms list/show/mute/unmute/activity/delete (v2)
@@ -163,7 +164,7 @@ Adding a command and the known response keys: `.claude/rules/go-patterns.md` (lo
 - **Output:** lipgloss v2 for tables, glamour v2 for markdown rendering (TTY-only — piped output stays plain). `--json` always emits the raw wire shape.
 - **Debug tooling:** `api <METHOD> <path> [--body <json|@file|->] [--v2] [--json]` — raw authenticated passthrough, the fastest way to verify an endpoint before wrapping it. `auth token --decode` prints the JWT claims (sub/exp/email; no signature check). `rooms events <id> [--since <cursor>] [--raw]` streams every SSE frame unfiltered. `rooms show --cursor/--after/--limit` pages the timeline; `rooms trace --full` skips output truncation.
 - **Memories/Goals:** `memories search/list/save` (v1 + MCP) plus `memories get/delete/update/edit` (metadata + content versioning). `goals list/update(by title)/save` plus `goals edit/reorder`. New write commands take `--companion` (defaults to the selected companion).
-- **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` plus `companions skills list/available/install/set/uninstall`, `companions resume`, `companions day [id] [--json]` (the 24 h day ring: arcs and dots, times and kinds only, owner-only), `companions sleep [id] --confirm` / `companions wake [id]` (`/presence/sleep`, `/presence/wake`; `wake` counts as the owner's turn, `resume` does not), `companions prompts versions/show/restore`, `companions identity show/set`, `companions tools list/set`. Companion media upload is a Follow-up (multipart upload exists for `stickers`).
+- **Companions:** `list`, `show`, `create`, `select`, `identity`, `update`, `delete` plus `companions skills list/available/install/set/uninstall`, `companions resume`, `companions day [id] [--json]` (the 24 h day ring: arcs and dots, times and kinds only, owner-only), `companions sleep [id] --confirm` / `companions wake [id]` (`/presence/sleep`, `/presence/wake`; `wake` counts as the owner's turn, `resume` does not), `companions timeline [id] [--include …] [--room] [--person] [--since/--until <date|RFC3339>] [--contains] [--group time|room|day] [--cursor] [--limit]` (`GET /api/v2/companions/{id}/timeline`, owner-only: one page of messages of all its rooms, memories, conversation memories, tool calls, oldest first; a date is the whole UTC day; `--group` is client-side; an unknown `kind` is skipped), `companions prompts versions/show/restore`, `companions identity show/set`, `companions tools list/set`. Companion media upload is a Follow-up (multipart upload exists for `stickers`).
 - **Triggers:** `triggers list/toggle/set/delete <companion>` — debug why a trigger fires or not.
 
 ## Security
