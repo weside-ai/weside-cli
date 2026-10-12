@@ -77,6 +77,10 @@ weside chat --stream -m "Tell me a story"
 | `weside companions identity` | Show active Companion's system prompt via MCP |
 | `weside companions update <id\|name> [flags]` | Update companion (name, personality, system prompt, category, tags, …) |
 | `weside companions delete <id\|name> --yes` | Delete a Companion |
+| `weside companions day [id\|name]` | The last 24 hours as a day ring (arcs and dots) |
+| `weside companions sleep [id\|name] --confirm` | Put a Companion to sleep (pauses proactive wakes) |
+| `weside companions wake [id\|name]` | Wake a Companion you put to sleep |
+| `weside companions timeline [id\|name] [flags]` | What a Companion lived across its rooms: messages, memories, tool calls (`--include`, `--since`/`--until`, `--room`, `--person`, `--contains`, `--group time\|room\|day`, `--cursor`, `--limit`) |
 
 ### Chat
 
