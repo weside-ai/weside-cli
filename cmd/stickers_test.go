@@ -290,7 +290,8 @@ func TestStickerExportTelegramSurfacesTheBotRequirement(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_, _ = fmt.Fprint(w, `{"type":"https://weside.ai/errors/telegram-bot-required",`+
-			`"detail":"Register a Telegram bot and link your Telegram account first."}`)
+			`"detail":"Exporting a sticker set needs your Telegram account linked to weside; `+
+			`Telegram makes that account the owner of the set."}`)
 	}))
 	defer srv.Close()
 
@@ -301,7 +302,7 @@ func TestStickerExportTelegramSurfacesTheBotRequirement(t *testing.T) {
 	if err == nil {
 		t.Fatal("export returned nil on a 409 telegram-bot-required")
 	}
-	if !strings.Contains(err.Error(), "Register a Telegram bot") {
+	if !strings.Contains(err.Error(), "needs your Telegram account linked to weside") {
 		t.Errorf("the error does not carry the API's detail: %v", err)
 	}
 }

@@ -296,10 +296,10 @@ var stickerPacksExportCmd = &cobra.Command{
 	Short: "Export a pack to a platform (currently Telegram only)",
 	Long: `Export a sticker pack as a real sticker set on a platform.
 
---telegram creates the set on YOUR Telegram bot for YOUR Telegram account.
-Telegram bots on weside are per user, so a pack cannot be exported without a
-registered bot and a linked Telegram account — the API refuses with 409
-telegram-bot-required and this command reports it.
+--telegram creates the set through the weside Telegram bot, owned by YOUR
+Telegram account. The export needs your Telegram account linked to weside
+(Telegram makes that account the owner of the set); without the link the API
+refuses with 409 telegram-bot-required and this command reports it.
 
 Example:
   weside stickers packs export 12 --telegram`,
@@ -404,7 +404,7 @@ func init() {
 	stickerPacksPublishCmd.Flags().BoolVar(&stickerPublishConfirmRights, "confirm-rights", false,
 		"Confirm the rights in the same call")
 	stickerPacksExportCmd.Flags().BoolVar(&stickerExportTelegram, "telegram", false,
-		"Export as a Telegram sticker set on your own bot")
+		"Export as a Telegram sticker set owned by your linked Telegram account")
 	stickerSendCmd.Flags().StringVar(&stickerSendBinding, "binding", "",
 		"Channel binding id to send into")
 
