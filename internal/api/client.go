@@ -110,12 +110,12 @@ func (c *Client) do(ctx context.Context, method, path string, body, result any) 
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending request: %w", err)
+		return ConnectionError(c.BaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+		return UnauthorizedError(c.BaseURL)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -182,7 +182,7 @@ func (c *Client) Subscribe(ctx context.Context, path string) (*http.Response, er
 
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
+		return nil, ConnectionError(c.BaseURL, err)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -222,7 +222,7 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
+		return nil, ConnectionError(c.BaseURL, err)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -266,7 +266,7 @@ func (c *Client) DoRawNoTimeout(ctx context.Context, method, path string, body a
 
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
+		return nil, ConnectionError(c.BaseURL, err)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -310,12 +310,12 @@ func (c *Client) stream(ctx context.Context, method, path string, body io.Reader
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending request: %w", err)
+		return ConnectionError(c.BaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+		return UnauthorizedError(c.BaseURL)
 	}
 	if resp.StatusCode >= 400 {
 		apiErr := Error{StatusCode: resp.StatusCode, Status: resp.Status}
@@ -382,12 +382,12 @@ func (c *Client) PostMultipart(
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending request: %w", err)
+		return ConnectionError(c.BaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("session expired or invalid token (run: weside auth login)")
+		return UnauthorizedError(c.BaseURL)
 	}
 	if resp.StatusCode >= 400 {
 		apiErr := Error{StatusCode: resp.StatusCode, Status: resp.Status}

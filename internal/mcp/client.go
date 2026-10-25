@@ -91,12 +91,12 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
+		return nil, api.ConnectionError(c.BaseURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("session expired (run: weside auth login)")
+		return nil, api.UnauthorizedError(c.BaseURL)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
