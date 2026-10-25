@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
 var (
-	memoryType   string
-	memCompanion string
+	memoryType      string
+	memCompanion    string
+	memListAutoload bool
+	memListPage     int
+	memListLimit    int
 )
 
 var memoriesCmd = &cobra.Command{
@@ -68,7 +72,12 @@ var memoriesSearchCmd = &cobra.Command{
 var memoriesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List memories",
-	RunE: func(_ *cobra.Command, _ []string) error {
+	Long: `List a companion's memories, one page at a time.
+
+--autoload=true lists only the pinned memories (always loaded into the
+companion's context), --autoload=false only the unpinned ones; without the
+flag both. --page/--limit page through the list (limit 1-100, default 20).`,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		companionID, err := resolveCompanion(memCompanion)
 		if err != nil {
 			return err
@@ -78,9 +87,9 @@ var memoriesListCmd = &cobra.Command{
 			return err
 		}
 
-		path := fmt.Sprintf("/companions/%s/memories", companionID)
-		if memoryType != "" {
-			path += "?memory_type=" + memoryType
+		path, err := memoriesListPath(cmd, companionID)
+		if err != nil {
+			return err
 		}
 
 		var result map[string]any
@@ -94,21 +103,74 @@ var memoriesListCmd = &cobra.Command{
 		}
 
 		memories, _ := result["memories"].([]any)
-		headers := []string{"ID", "TYPE", "TITLE", "CONTENT"}
+		headers := []string{"ID", "MEMORY_ID", "PINNED", "TYPE", "TITLE", "CONTENT"}
 		var rows [][]string
 		for _, item := range memories {
 			m, _ := item.(map[string]any)
-			id := fmt.Sprintf("%v", m["id"])
-			mtype := fmt.Sprintf("%v", m["type"])
-			title := truncate(fmt.Sprintf("%v", m["title"]), 30)
-			content := truncate(fmt.Sprintf("%v", m["content"]), 50)
-			rows = append(rows, []string{id, mtype, title, content})
+			rows = append(rows, memoryListRow(m))
 		}
 
 		ui.PrintTable(headers, rows)
-		ui.Printf("\n%d memory/ies\n", len(memories))
+		ui.Printf("\n%d memory/ies on page %v of %v (total %v)\n",
+			len(memories), result["page"], result["total_pages"], result["total"])
 		return nil
 	},
+}
+
+// addMemoriesListFilterFlags registers the filter and paging flags of
+// `memories list` (shared with its test, which needs fresh Changed state).
+func addMemoriesListFilterFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&memoryType, "type", "", "filter by type (fact, preference, experience, reflection)")
+	cmd.Flags().BoolVar(&memListAutoload, "autoload", false, "true: only pinned (autoload) memories, false: only unpinned; unset: all")
+	cmd.Flags().IntVar(&memListPage, "page", 1, "page number (from 1)")
+	cmd.Flags().IntVar(&memListLimit, "limit", 20, "memories per page (1-100)")
+}
+
+// memoriesListPath builds the list request from the flags. --autoload is
+// sent only when the user set it, so "unset" stays "no filter" rather than
+// collapsing into autoload=false.
+func memoriesListPath(cmd *cobra.Command, companionID string) (string, error) {
+	q := url.Values{}
+	if memoryType != "" {
+		q.Set("memory_type", memoryType)
+	}
+	if cmd.Flags().Changed("autoload") {
+		q.Set("autoload", strconv.FormatBool(memListAutoload))
+	}
+	if cmd.Flags().Changed("page") {
+		if memListPage < 1 {
+			return "", fmt.Errorf("--page must be at least 1")
+		}
+		q.Set("page", strconv.Itoa(memListPage))
+	}
+	if cmd.Flags().Changed("limit") {
+		if memListLimit < 1 || memListLimit > 100 {
+			return "", fmt.Errorf("--limit must be between 1 and 100")
+		}
+		q.Set("limit", strconv.Itoa(memListLimit))
+	}
+	path := fmt.Sprintf("/companions/%s/memories", companionID)
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return path, nil
+}
+
+// memoryListRow renders one memory: the row id, the stable memory_id that
+// `memories get/update` take, and the pin (autoload) flag.
+func memoryListRow(m map[string]any) []string {
+	pinned := "no"
+	if b, _ := m["autoload"].(bool); b {
+		pinned = "yes"
+	}
+	return []string{
+		fmt.Sprintf("%v", m["id"]),
+		fmt.Sprintf("%v", m["memory_id"]),
+		pinned,
+		fmt.Sprintf("%v", m["type"]),
+		truncate(fmt.Sprintf("%v", m["title"]), 30),
+		truncate(fmt.Sprintf("%v", m["content"]), 50),
+	}
 }
 
 var (
@@ -172,7 +234,7 @@ var memoriesSaveCmd = &cobra.Command{
 func init() {
 	memoriesSearchCmd.Flags().StringVar(&memCompanion, "companion", "", "companion id or name (default: selected companion)")
 	memoriesListCmd.Flags().StringVar(&memCompanion, "companion", "", "companion id or name (default: selected companion)")
-	memoriesListCmd.Flags().StringVar(&memoryType, "type", "", "filter by type (fact, preference, experience, reflection)")
+	addMemoriesListFilterFlags(memoriesListCmd)
 
 	memoriesSaveCmd.Flags().StringVar(&memorySaveContent, "content", "", "memory content (required)")
 	memoriesSaveCmd.Flags().StringVar(&memorySaveType, "type", "fact", "memory type (fact, preference, experience, reflection)")
