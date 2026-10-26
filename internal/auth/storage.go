@@ -19,9 +19,12 @@ import (
 // GetToken refreshes it, so a caller never sends a token that expires in flight.
 const refreshLeeway = 60 * time.Second
 
-// lockTimeout bounds the wait for another process's refresh (its HTTP call
-// times out after 30 s, see supabaseHTTPClient).
-const lockTimeout = 45 * time.Second
+// resolveTimeout bounds the auth-config resolution before a refresh.
+const resolveTimeout = 10 * time.Second
+
+// lockTimeout bounds the wait for another process's refresh: its resolution
+// plus its token request (supabaseHTTPClient.Timeout), plus slack.
+var lockTimeout = resolveTimeout + supabaseHTTPClient.Timeout + 5*time.Second
 
 // Tokens holds the stored authentication tokens.
 type Tokens struct {
@@ -61,7 +64,13 @@ func (s *Storage) Save(tokens *Tokens) error {
 		return fmt.Errorf("marshaling tokens: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".credentials-*.tmp")
+	// Rename onto the symlink's target, not the link: a dotfile setup that
+	// links credentials.json keeps its link.
+	target := s.filePath
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		target = resolved
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".credentials-*.tmp")
 	if err != nil {
 		return fmt.Errorf("writing tokens: %w", err)
 	}
@@ -82,7 +91,7 @@ func (s *Storage) Save(tokens *Tokens) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing tokens: %w", err)
 	}
-	if err := os.Rename(tmpName, s.filePath); err != nil {
+	if err := os.Rename(tmpName, target); err != nil {
 		return fmt.Errorf("writing tokens: %w", err)
 	}
 	return nil
@@ -164,11 +173,17 @@ func (s *Storage) freshAccessToken(apiURL string) (string, error) {
 		return "", errors.New("session expired and no refresh token stored — please re-login with: weside auth login")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
 	defer cancel()
 	resolved := Resolve(ctx, apiURL)
 	if errors.Is(resolved.FetchError, ErrPartialOverride) {
 		return "", resolved.FetchError
+	}
+	if resolved.Source == SourceFallback && normalizeAPIURL(apiURL) != normalizeAPIURL(config.DefaultAPIURL) {
+		// The hardcoded fallback is production's Supabase. A session issued
+		// for another backend must not send its refresh token there
+		// (pinned by TestGetTokenFallbackConfigRefusesRefreshForOtherBackend).
+		return "", fmt.Errorf("could not resolve the auth config of %s (%w) — session not refreshed; retry, or run: weside config refresh-auth", apiURL, resolved.FetchError)
 	}
 	cfg := resolved.Config
 	result, err := RefreshAccessToken(cfg.SupabaseURL, cfg.SupabaseAnonKey, cfg.OAuthClientID, tokens.RefreshToken)

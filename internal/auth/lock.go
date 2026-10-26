@@ -37,7 +37,11 @@ func lockFile(path string, timeout time.Duration) (func(), error) {
 		}
 		if time.Now().After(deadline) {
 			_ = f.Close()
-			return nil, fmt.Errorf("another weside process holds %s for more than %s — retry, or remove the file if no weside process runs", path, timeout)
+			// No deletion hint: the OS drops the lock when its holder exits, so
+			// only a live weside process gets here, and deleting the file under
+			// it would let the next caller lock a new inode and replay the
+			// refresh token the holder is spending.
+			return nil, fmt.Errorf("another weside process is refreshing the session (waited %s) — retry", timeout)
 		}
 		time.Sleep(lockPollInterval)
 	}

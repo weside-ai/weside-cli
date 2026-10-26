@@ -378,3 +378,71 @@ func TestGetTokenPartialOverrideRefusesRefresh(t *testing.T) {
 		t.Fatalf("refresh sent against a half-overridden auth config")
 	}
 }
+
+// A backend whose auth config cannot be resolved falls back to production's
+// Supabase; a session of another backend must not send its refresh token
+// there.
+func TestGetTokenFallbackConfigRefusesRefreshForOtherBackend(t *testing.T) {
+	fake := newFakeTokenServer(t, "refresh-0")
+	expired := fakeJWT(t, time.Now().Add(-time.Minute), "old")
+	path := setupHome(t, fake.srv.URL, auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"})
+	viper.Set("supabase_url", "")
+	viper.Set("supabase_anon_key", "")
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(down.Close)
+	viper.Set("api_url", down.URL)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = auth.GetToken()
+	if err == nil || !strings.Contains(err.Error(), "could not resolve the auth config") {
+		t.Fatalf("GetToken() = %v, want an auth-config resolution error", err)
+	}
+	if strings.Contains(err.Error(), "refresh-0") || strings.Contains(err.Error(), expired) {
+		t.Fatalf("error message carries a token")
+	}
+	if fake.requests.Load() != 0 {
+		t.Fatalf("refresh sent while the auth config was unresolved")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("credentials file changed after a refused refresh")
+	}
+}
+
+// A credentials.json that is a symlink keeps its link across a refresh; the
+// rotated pair lands in the link's target.
+func TestGetTokenRefreshKeepsSymlinkedCredentials(t *testing.T) {
+	fake := newFakeTokenServer(t, "refresh-0")
+	fake.delay = 0
+	expired := fakeJWT(t, time.Now().Add(-time.Minute), "old")
+	path := setupHome(t, fake.srv.URL, auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"})
+	target := filepath.Join(t.TempDir(), "creds.json")
+	if err := os.Rename(path, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := auth.GetToken(); err != nil {
+		t.Fatalf("GetToken() error: %v", err)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("credentials.json replaced by a regular file")
+	}
+	if stored := readTokens(t, target); stored.RefreshToken != "rotated-refresh-1" {
+		t.Fatalf("link target refresh token = %q, want rotated-refresh-1", stored.RefreshToken)
+	}
+}
