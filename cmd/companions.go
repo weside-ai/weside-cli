@@ -660,7 +660,7 @@ func init() {
 	companionsCmd.AddCommand(companionsShowCmd)
 	companionsCmd.AddCommand(companionsCreateCmd)
 	companionsCmd.AddCommand(companionsSelectCmd)
-	companionsIdentityCmd.Flags().StringVar(&identityCompanion, "companion", "", "companion name (default: selected companion)")
+	companionsIdentityCmd.Flags().StringVar(&identityCompanion, "companion", "", companionPinFlagUsage)
 	companionsCmd.AddCommand(companionsIdentityCmd)
 	companionsCmd.AddCommand(companionsUpdateCmd)
 	companionsCmd.AddCommand(companionsDeleteCmd)

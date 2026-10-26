@@ -14,7 +14,7 @@ import (
 
 // mcpPinRecorder serves a minimal MCP tools/call answer and records the
 // X-Weside-Companion header of every request.
-func mcpPinRecorder(t *testing.T) (*httptest.Server, *[]string) {
+func mcpPinRecorder(t *testing.T) *[]string {
 	t.Helper()
 	var pins []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +30,7 @@ func mcpPinRecorder(t *testing.T) (*httptest.Server, *[]string) {
 	t.Setenv("WESIDE_TOKEN", "test-token")
 	viper.Set("api_url", srv.URL)
 	t.Cleanup(func() { viper.Set("api_url", "") })
-	return srv, &pins
+	return &pins
 }
 
 func withDefaultCompanion(t *testing.T, name string) {
@@ -40,7 +40,7 @@ func withDefaultCompanion(t *testing.T, name string) {
 }
 
 func TestIdentityPinsTheLocallySelectedCompanion(t *testing.T) {
-	_, pins := mcpPinRecorder(t)
+	pins := mcpPinRecorder(t)
 	withDefaultCompanion(t, "Nox")
 
 	if err := companionsIdentityCmd.RunE(companionsIdentityCmd, nil); err != nil {
@@ -52,7 +52,7 @@ func TestIdentityPinsTheLocallySelectedCompanion(t *testing.T) {
 }
 
 func TestIdentityWithoutLocalSelectionSendsNoPin(t *testing.T) {
-	_, pins := mcpPinRecorder(t)
+	pins := mcpPinRecorder(t)
 	withDefaultCompanion(t, "")
 
 	if err := companionsIdentityCmd.RunE(companionsIdentityCmd, nil); err != nil {
@@ -64,7 +64,7 @@ func TestIdentityWithoutLocalSelectionSendsNoPin(t *testing.T) {
 }
 
 func TestIdentityCompanionFlagWinsOverLocalSelection(t *testing.T) {
-	_, pins := mcpPinRecorder(t)
+	pins := mcpPinRecorder(t)
 	withDefaultCompanion(t, "Nox")
 	identityCompanion = "Elise"
 	t.Cleanup(func() { identityCompanion = "" })
@@ -79,7 +79,7 @@ func TestIdentityCompanionFlagWinsOverLocalSelection(t *testing.T) {
 
 // The MCP write verbs follow the same selection as identity.
 func TestMCPSaveVerbsPinTheLocallySelectedCompanion(t *testing.T) {
-	_, pins := mcpPinRecorder(t)
+	pins := mcpPinRecorder(t)
 	withDefaultCompanion(t, "Nox")
 	memorySaveContent = "c"
 	goalSaveContent = "c"

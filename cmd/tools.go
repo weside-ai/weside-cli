@@ -113,6 +113,9 @@ func newMCPClient() (*mcp.Client, error) {
 	return mcp.NewClient(baseURL, token), nil
 }
 
+// companionPinFlagUsage is the --companion help of every pinned MCP verb.
+const companionPinFlagUsage = "companion name (default: selected companion)"
+
 // newPinnedMCPClient is newMCPClient pinned to a companion (WA-2674): the
 // explicit name wins, else the locally selected companion (`companions
 // select`). With neither, no pin is sent and the server's selection applies.

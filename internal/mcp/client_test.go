@@ -224,3 +224,42 @@ func TestCallSendsCompanionPinOnlyWhenSet(t *testing.T) {
 		t.Fatalf("pins = %q, want [\"\" \"Nox\"]", got)
 	}
 }
+
+// A non-ASCII name leaves the client as its UTF-8 bytes; weside-core re-reads
+// the header as UTF-8 (app/mcp/server.py _utf8_header).
+func TestCallSendsNonASCIIPinAsUTF8(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(mcp.CompanionPinHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	defer srv.Close()
+
+	c := mcp.NewClient(srv.URL, "t")
+	c.Companion = "Zoë"
+	if _, err := c.Call(context.Background(), "ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got != "Zoë" || []byte(got)[2] != 0xc3 {
+		t.Fatalf("pin = %q, want the UTF-8 bytes of \"Zoë\"", got)
+	}
+}
+
+// An unknown pin is a 422 from the server (WA-2676); the CLI surfaces it
+// instead of writing to another companion.
+func TestCallSurfacesUnknownPin422(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"detail":"None of your 50 newest companions is named 'Nxo'"}`))
+	}))
+	defer srv.Close()
+
+	c := mcp.NewClient(srv.URL, "t")
+	c.Companion = "Nxo"
+	_, err := c.Call(context.Background(), "tools/call", nil)
+	if err == nil || !strings.Contains(err.Error(), "422") || !strings.Contains(err.Error(), "named 'Nxo'") {
+		t.Fatalf("err = %v, want the 422 with the server's detail", err)
+	}
+}
