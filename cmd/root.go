@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/weside-ai/weside-cli/internal/config"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
 
@@ -99,7 +100,7 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	if apiURL == "" {
-		viper.SetDefault("api_url", "https://api.weside.ai")
+		viper.SetDefault("api_url", config.DefaultAPIURL)
 	}
 
 	// Respect NO_COLOR environment variable
@@ -112,10 +113,7 @@ func initConfig() {
 
 // GetAPIURL returns the configured API base URL.
 func GetAPIURL() string {
-	if url := viper.GetString("api_url"); url != "" {
-		return url
-	}
-	return "https://api.weside.ai"
+	return config.APIURL()
 }
 
 // IsJSON returns whether JSON output is enabled.
