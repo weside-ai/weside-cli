@@ -74,7 +74,7 @@ weside chat --stream -m "Tell me a story"
 | `weside companions show <id\|name>` | Show Companion details (incl. system prompt) |
 | `weside companions create --name "X"` | Create a new Companion |
 | `weside companions select <name>` | Set default Companion for chat |
-| `weside companions identity` | Show active Companion's system prompt via MCP |
+| `weside companions identity` | Show the selected Companion's system prompt via MCP (`--companion <name>` overrides) |
 | `weside companions update <id\|name> [flags]` | Update companion (name, personality, system prompt, category, tags, …) |
 | `weside companions delete <id\|name> --yes` | Delete a Companion |
 | `weside companions day [id\|name]` | The last 24 hours as a day ring (arcs and dots) |
