@@ -19,11 +19,19 @@ import (
 
 // Client communicates with the weside MCP server via HTTP JSON-RPC.
 type Client struct {
-	BaseURL    string
-	Token      string
+	BaseURL string
+	Token   string
+	// Companion pins every request to this companion by name via the
+	// X-Weside-Companion header (WA-2676); empty sends no pin and the server
+	// routes by its own selection.
+	Companion  string
 	HTTPClient *http.Client
 	reqID      atomic.Int64
 }
+
+// CompanionPinHeader is the request header the MCP server reads as the
+// companion pin (weside-core app/mcp/server.py, WA-2676).
+const CompanionPinHeader = "X-Weside-Companion"
 
 // NewClient creates a new MCP client.
 func NewClient(baseURL, token string) *Client {
@@ -87,6 +95,9 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	if c.Token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.Companion != "" {
+		httpReq.Header.Set(CompanionPinHeader, c.Companion)
 	}
 
 	resp, err := c.HTTPClient.Do(httpReq)

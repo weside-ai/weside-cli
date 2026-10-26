@@ -12,11 +12,14 @@ import (
 )
 
 var (
-	memoryType      string
-	memCompanion    string
-	memListAutoload bool
-	memListPage     int
-	memListLimit    int
+	memoryType string
+	// memCompanion is the REST verbs' --companion (a name or id, resolved client-side).
+	memCompanion string
+	// memorySaveCompanion is `memories save --companion` (a name: the MCP pin resolves names).
+	memorySaveCompanion string
+	memListAutoload     bool
+	memListPage         int
+	memListLimit        int
 )
 
 var memoriesCmd = &cobra.Command{
@@ -188,7 +191,7 @@ var memoriesSaveCmd = &cobra.Command{
 			return fmt.Errorf("--content is required")
 		}
 
-		client, err := newMCPClient()
+		client, err := newPinnedMCPClient(memorySaveCompanion)
 		if err != nil {
 			return err
 		}
@@ -239,6 +242,7 @@ func init() {
 	memoriesSaveCmd.Flags().StringVar(&memorySaveContent, "content", "", "memory content (required)")
 	memoriesSaveCmd.Flags().StringVar(&memorySaveType, "type", "fact", "memory type (fact, preference, experience, reflection)")
 	memoriesSaveCmd.Flags().StringVar(&memorySaveTags, "tags", "", "comma-separated tags")
+	memoriesSaveCmd.Flags().StringVar(&memorySaveCompanion, "companion", "", companionPinFlagUsage)
 
 	memoriesCmd.AddCommand(memoriesSearchCmd)
 	memoriesCmd.AddCommand(memoriesListCmd)

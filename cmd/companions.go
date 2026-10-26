@@ -439,11 +439,14 @@ func resolveCompanionID(client *api.Client, nameOrID string) (string, error) {
 	return "", fmt.Errorf("companion %q not found", nameOrID)
 }
 
+// identityCompanion is `companions identity --companion`.
+var identityCompanion string
+
 var companionsIdentityCmd = &cobra.Command{
 	Use:   "identity",
-	Short: "Load the active Companion's full identity via MCP",
+	Short: "Load the selected Companion's full identity via MCP",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		client, err := newMCPClient()
+		client, err := newPinnedMCPClient(identityCompanion)
 		if err != nil {
 			return err
 		}
@@ -657,6 +660,7 @@ func init() {
 	companionsCmd.AddCommand(companionsShowCmd)
 	companionsCmd.AddCommand(companionsCreateCmd)
 	companionsCmd.AddCommand(companionsSelectCmd)
+	companionsIdentityCmd.Flags().StringVar(&identityCompanion, "companion", "", companionPinFlagUsage)
 	companionsCmd.AddCommand(companionsIdentityCmd)
 	companionsCmd.AddCommand(companionsUpdateCmd)
 	companionsCmd.AddCommand(companionsDeleteCmd)

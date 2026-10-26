@@ -119,10 +119,11 @@ var goalsUpdateCmd = &cobra.Command{
 }
 
 var (
-	goalSaveContent  string
-	goalSaveTags     string
-	goalSaveDue      string
-	goalSaveFollowUp string
+	goalSaveContent   string
+	goalSaveTags      string
+	goalSaveDue       string
+	goalSaveFollowUp  string
+	goalSaveCompanion string
 )
 
 var goalsSaveCmd = &cobra.Command{
@@ -134,7 +135,7 @@ var goalsSaveCmd = &cobra.Command{
 			return fmt.Errorf("--content is required")
 		}
 
-		client, err := newMCPClient()
+		client, err := newPinnedMCPClient(goalSaveCompanion)
 		if err != nil {
 			return err
 		}
@@ -191,6 +192,7 @@ func init() {
 	goalsSaveCmd.Flags().StringVar(&goalSaveTags, "tags", "", "comma-separated tags")
 	goalsSaveCmd.Flags().StringVar(&goalSaveDue, "due", "", "target date (YYYY-MM-DD)")
 	goalsSaveCmd.Flags().StringVar(&goalSaveFollowUp, "follow-up", "", "follow-up date (YYYY-MM-DD)")
+	goalsSaveCmd.Flags().StringVar(&goalSaveCompanion, "companion", "", companionPinFlagUsage)
 
 	goalsCmd.AddCommand(goalsListCmd)
 	goalsCmd.AddCommand(goalsUpdateCmd)
