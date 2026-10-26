@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/weside-ai/weside-cli/internal/auth"
+	"github.com/weside-ai/weside-cli/internal/config"
 	"github.com/weside-ai/weside-cli/internal/mcp"
 	"github.com/weside-ai/weside-cli/internal/ui"
 )
@@ -110,6 +111,21 @@ func newMCPClient() (*mcp.Client, error) {
 
 	baseURL := GetAPIURL() + "/mcp/"
 	return mcp.NewClient(baseURL, token), nil
+}
+
+// newPinnedMCPClient is newMCPClient pinned to a companion (WA-2674): the
+// explicit name wins, else the locally selected companion (`companions
+// select`). With neither, no pin is sent and the server's selection applies.
+func newPinnedMCPClient(companion string) (*mcp.Client, error) {
+	client, err := newMCPClient()
+	if err != nil {
+		return nil, err
+	}
+	if companion == "" {
+		companion = config.GetDefaultCompanion()
+	}
+	client.Companion = companion
+	return client, nil
 }
 
 func init() {
