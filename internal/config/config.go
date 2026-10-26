@@ -27,6 +27,18 @@ func EnsureConfigDir() (string, error) {
 	return dir, nil
 }
 
+// DefaultAPIURL is the backend the CLI talks to when no --api-url / api_url is set.
+const DefaultAPIURL = "https://api.weside.ai"
+
+// APIURL returns the configured backend base URL (flag, env or config file),
+// or DefaultAPIURL.
+func APIURL() string {
+	if url := viper.GetString("api_url"); url != "" {
+		return url
+	}
+	return DefaultAPIURL
+}
+
 // GetDefaultCompanion returns the configured default companion name.
 func GetDefaultCompanion() string {
 	return viper.GetString("default_companion")

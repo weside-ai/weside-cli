@@ -64,7 +64,7 @@ weside chat --stream -m "Tell me a story"
 | `weside auth login --dev` | Log in (dev mode, local backend) |
 | `weside auth logout` | Log out and remove stored credentials |
 | `weside auth whoami` | Show current authenticated user |
-| `weside auth token` | Print access token to stdout (for scripting) |
+| `weside auth token` | Print access token to stdout (for scripting); refreshes a stored session whose token expires within 60 s |
 
 ### Companions
 
