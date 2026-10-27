@@ -41,11 +41,11 @@ var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Log out and remove stored credentials",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		storage := auth.NewStorage()
+		storage := auth.NewStorage(GetAPIURL())
 		if err := storage.Delete(); err != nil {
 			return fmt.Errorf("logging out: %w", err)
 		}
-		ui.PrintSuccess("Logged out successfully.")
+		ui.PrintSuccess("Logged out of %s.", storage.Env())
 		return nil
 	},
 }
@@ -70,6 +70,8 @@ var authWhoamiCmd = &cobra.Command{
 			return nil
 		}
 
+		storage := auth.NewStorage(GetAPIURL())
+		ui.Printf("Environment: %s (%s)\n", storage.Env(), GetAPIURL())
 		ui.Printf("Logged in as: %s\n", user["email"])
 		if name, ok := user["display_name"]; ok && name != nil {
 			ui.Printf("Name: %s\n", name)
@@ -216,10 +218,11 @@ func loginPKCE() error {
 		return err
 	}
 
-	if err := finishLogin(cfg, code, verifier, server.RedirectURI(), promptTOTPCode, auth.NewStorage()); err != nil {
+	storage := auth.NewStorage(GetAPIURL())
+	if err := finishLogin(cfg, code, verifier, server.RedirectURI(), promptTOTPCode, storage); err != nil {
 		return err
 	}
-	ui.PrintSuccess("Login successful!")
+	ui.PrintSuccess("Login successful (%s).", storage.Env())
 	return nil
 }
 
@@ -279,6 +282,10 @@ func openBrowser(url string) error {
 }
 
 func loginDev() error {
+	storage := auth.NewStorage(GetAPIURL())
+	if storage.Env() == auth.EnvProd {
+		return fmt.Errorf("dev login targets production (%s) — pass --api-url of a dev backend", GetAPIURL())
+	}
 	email := "test@weside.ai"
 	ui.Printf("Logging in as %s (dev mode)...\n", email)
 
@@ -294,12 +301,11 @@ func loginDev() error {
 		return fmt.Errorf("no access token in response")
 	}
 
-	storage := auth.NewStorage()
 	if err := storage.Save(&auth.Tokens{AccessToken: token}); err != nil {
 		return fmt.Errorf("saving token: %w", err)
 	}
 
-	ui.PrintSuccess("Logged in as %s (dev mode)", email)
+	ui.PrintSuccess("Logged in as %s (dev mode, %s)", email, storage.Env())
 	return nil
 }
 
