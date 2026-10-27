@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,17 +34,74 @@ type Tokens struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
-// Storage handles token persistence.
+// Storage handles token persistence for one environment. Each environment
+// keeps its own file, so a login to one never replaces another's session
+// (pinned by TestDevLoginLeavesProdCredentialsUntouched).
 type Storage struct {
 	filePath string
+	env      string
 }
 
-// NewStorage creates a new token storage.
-func NewStorage() *Storage {
+// NewStorage returns the token storage of the environment apiURL targets:
+// production keeps ~/.weside/credentials.json, every other environment
+// ~/.weside/credentials-<env>.json (see Environment).
+func NewStorage(apiURL string) *Storage {
 	home, _ := os.UserHomeDir()
-	return &Storage{
-		filePath: filepath.Join(home, ".weside", "credentials.json"),
+	env := Environment(apiURL)
+	name := "credentials.json"
+	if env != EnvProd {
+		name = "credentials-" + env + ".json"
 	}
+	return &Storage{
+		filePath: filepath.Join(home, ".weside", name),
+		env:      env,
+	}
+}
+
+// EnvProd is the environment name of config.DefaultAPIURL.
+const EnvProd = "prod"
+
+// Environment names the environment an API base URL targets: "prod" for
+// api.weside.ai, "staging" for staging.api.weside.ai, "dev" for a loopback
+// backend, otherwise the URL's host (and port), reduced to [A-Za-z0-9.-_].
+// An unparsable URL is never "prod".
+func Environment(apiURL string) string {
+	u, err := url.Parse(normalizeAPIURL(apiURL))
+	if err != nil || u.Host == "" {
+		return "custom"
+	}
+	host := strings.ToLower(u.Hostname())
+	switch {
+	case host == "api.weside.ai" && u.Port() == "":
+		return EnvProd
+	case host == "staging.api.weside.ai" && u.Port() == "":
+		return "staging"
+	case host == "localhost":
+		return "dev"
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return "dev"
+	}
+	key := host
+	if u.Port() != "" {
+		key += "_" + u.Port()
+	}
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, key)
+}
+
+// Env returns the environment name this storage belongs to.
+func (s *Storage) Env() string {
+	return s.env
+}
+
+// FilePath returns the credentials file this storage reads and writes.
+func (s *Storage) FilePath() string {
+	return s.filePath
 }
 
 // SetFilePath overrides the storage file path (for testing).
@@ -102,7 +161,7 @@ func (s *Storage) Load() (*Tokens, error) {
 	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("not logged in (run: weside auth login)")
+			return nil, fmt.Errorf("not logged in to %s (run: weside auth login)", s.envLabel())
 		}
 		return nil, fmt.Errorf("reading tokens: %w", err)
 	}
@@ -113,10 +172,17 @@ func (s *Storage) Load() (*Tokens, error) {
 	}
 
 	if tokens.AccessToken == "" {
-		return nil, fmt.Errorf("no access token found (run: weside auth login)")
+		return nil, fmt.Errorf("no access token found for %s (run: weside auth login)", s.envLabel())
 	}
 
 	return &tokens, nil
+}
+
+func (s *Storage) envLabel() string {
+	if s.env == "" {
+		return "this environment"
+	}
+	return s.env
 }
 
 // Delete removes stored tokens.
@@ -127,15 +193,17 @@ func (s *Storage) Delete() error {
 	return nil
 }
 
-// GetToken returns a usable access token. WESIDE_TOKEN is returned as is.
-// Otherwise the stored access token is returned, refreshed first when its exp
-// lies within refreshLeeway — see Storage.freshAccessToken.
+// GetToken returns a usable access token for the configured API URL.
+// WESIDE_TOKEN is returned as is. Otherwise that environment's stored access
+// token is returned, refreshed first when its exp lies within refreshLeeway —
+// see Storage.freshAccessToken.
 func GetToken() (string, error) {
 	// Check env var first (CI/headless)
 	if token := os.Getenv("WESIDE_TOKEN"); token != "" {
 		return token, nil
 	}
-	return NewStorage().freshAccessToken(config.APIURL())
+	apiURL := config.APIURL()
+	return NewStorage(apiURL).freshAccessToken(apiURL)
 }
 
 // freshAccessToken returns the stored access token, refreshing it when it

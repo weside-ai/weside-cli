@@ -74,7 +74,7 @@ weside-cli/
 │   └── version.go          # version (ldflags injected)
 ├── internal/               # Private packages (Go compiler enforced)
 │   ├── api/client.go       # HTTP client (Get/Post/Put/Patch/Delete, PostStream/PutStream/PostMultipart, DoRaw/DoRawNoTimeout/Subscribe)
-│   ├── auth/               # storage.go (token persistence, ~/.weside/credentials.json), pkce.go (OAuth + refresh grant), mfa.go (TOTP step), discovery.go (auth config)
+│   ├── auth/               # storage.go (token persistence per environment, ~/.weside/credentials[-<env>].json), pkce.go (OAuth + refresh grant), mfa.go (TOTP step), discovery.go (auth config)
 │   ├── mcp/client.go       # MCP client (tools discover/exec)
 │   ├── config/config.go    # Config dir + default companion
 │   └── ui/                 # output.go (JSON/table), markdown.go (glamour, TTY-only), terminal.go (SafeText: escape terminal controls in remote text)

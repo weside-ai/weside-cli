@@ -50,7 +50,7 @@ weside chat -m "Hey, how are you?"
 weside chat --stream -m "Tell me a story"
 ```
 
-> **Note:** `weside auth login` opens your browser and runs a full OAuth login (PKCE) against weside.ai — pick Google, Apple, or email, and credentials are stored in `~/.weside/credentials.json`. Use `--dev` against a local backend for development, or set `WESIDE_TOKEN` for CI/headless use.
+> **Note:** `weside auth login` opens your browser and runs a full OAuth login (PKCE) against weside.ai — pick Google, Apple, or email, and credentials are stored per environment (prod: `~/.weside/credentials.json`). Use `--dev` against a local backend for development, or set `WESIDE_TOKEN` for CI/headless use.
 >
 > **Two-factor authentication:** if your account has an authenticator app set up, `weside auth login` asks for the 6-digit code in the terminal after the browser step (input is hidden). A wrong code gets one retry. The code raises the CLI session to the same assurance as an app sign-in with the code; confirming it also signs out your other sessions that were signed in without the code. A CLI session from before this step fails with "run `weside auth login` again" — do that once.
 
@@ -221,7 +221,7 @@ and then `weside auth login` again — no CLI release required. (Plain
 `weside auth login` alone reuses the cached values and would still hit
 the rotated key.)
 
-Credentials: `~/.weside/credentials.json` (600 permissions)
+Credentials: one file per environment, so a login to one never replaces another: prod `~/.weside/credentials.json`, staging `credentials-staging.json`, a local backend `credentials-dev.json`, any other `--api-url` `credentials-<host>.json` (600 permissions). `weside auth whoami` names the environment.
 
 ## API Concepts
 

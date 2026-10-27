@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/weside-ai/weside-cli/internal/auth"
+	"github.com/weside-ai/weside-cli/internal/config"
 )
 
 // TestFinishLogin_StoresTheVerifiedAAL2Tokens drives PKCE exchange → factor
@@ -38,7 +39,7 @@ func TestFinishLogin_StoresTheVerifiedAAL2Tokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	storage := auth.NewStorage()
+	storage := auth.NewStorage(config.DefaultAPIURL)
 	storage.SetFilePath(filepath.Join(t.TempDir(), "credentials.json"))
 	cfg := &auth.Config{SupabaseURL: srv.URL, SupabaseAnonKey: "anon", OAuthClientID: "cli"}
 
@@ -74,7 +75,7 @@ func TestFinishLogin_WrongCodeTwiceStoresNothing(t *testing.T) {
 	defer srv.Close()
 
 	path := filepath.Join(t.TempDir(), "credentials.json")
-	storage := auth.NewStorage()
+	storage := auth.NewStorage(config.DefaultAPIURL)
 	storage.SetFilePath(path)
 	cfg := &auth.Config{SupabaseURL: srv.URL, SupabaseAnonKey: "anon", OAuthClientID: "cli"}
 

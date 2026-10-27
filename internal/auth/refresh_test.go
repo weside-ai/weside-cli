@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/weside-ai/weside-cli/internal/auth"
+	"github.com/weside-ai/weside-cli/internal/config"
 )
 
 // fakeJWT builds an unsigned JWT whose payload carries exp — enough for
@@ -98,7 +99,7 @@ func setupHome(t *testing.T, supabaseURL string, tokens auth.Tokens) string {
 	t.Cleanup(viper.Reset)
 	viper.Set("supabase_url", supabaseURL)
 	viper.Set("supabase_anon_key", "test-anon-key")
-	if err := auth.NewStorage().Save(&tokens); err != nil {
+	if err := auth.NewStorage(config.DefaultAPIURL).Save(&tokens); err != nil {
 		t.Fatal(err)
 	}
 	return filepath.Join(home, ".weside", "credentials.json")
@@ -385,7 +386,7 @@ func TestGetTokenPartialOverrideRefusesRefresh(t *testing.T) {
 func TestGetTokenFallbackConfigRefusesRefreshForOtherBackend(t *testing.T) {
 	fake := newFakeTokenServer(t, "refresh-0")
 	expired := fakeJWT(t, time.Now().Add(-time.Minute), "old")
-	path := setupHome(t, fake.srv.URL, auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"})
+	setupHome(t, fake.srv.URL, auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"})
 	viper.Set("supabase_url", "")
 	viper.Set("supabase_anon_key", "")
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -393,6 +394,12 @@ func TestGetTokenFallbackConfigRefusesRefreshForOtherBackend(t *testing.T) {
 	}))
 	t.Cleanup(down.Close)
 	viper.Set("api_url", down.URL)
+	// The session belongs to that backend's environment, not to prod's file.
+	storage := auth.NewStorage(down.URL)
+	if err := storage.Save(&auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"}); err != nil {
+		t.Fatal(err)
+	}
+	path := storage.FilePath()
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -444,5 +451,97 @@ func TestGetTokenRefreshKeepsSymlinkedCredentials(t *testing.T) {
 	}
 	if stored := readTokens(t, target); stored.RefreshToken != "rotated-refresh-1" {
 		t.Fatalf("link target refresh token = %q, want rotated-refresh-1", stored.RefreshToken)
+	}
+}
+
+// A refresh in one environment writes only that environment's file and takes
+// only that file's lock; the prod login stays byte-identical.
+func TestGetTokenRefreshWritesOnlyItsEnvironment(t *testing.T) {
+	fake := newFakeTokenServer(t, "refresh-0")
+	fake.delay = 0
+	prodTok := fakeJWT(t, time.Now().Add(time.Hour), "prod")
+	prodPath := setupHome(t, fake.srv.URL, auth.Tokens{AccessToken: prodTok, RefreshToken: "prod-refresh"})
+	prodBefore, err := os.ReadFile(prodPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	viper.Set("api_url", fake.srv.URL) // a loopback backend: the dev environment
+	dev := auth.NewStorage(fake.srv.URL)
+	if dev.Env() != "dev" || dev.FilePath() == prodPath {
+		t.Fatalf("dev storage = %s at %s, want its own file", dev.Env(), dev.FilePath())
+	}
+	expired := fakeJWT(t, time.Now().Add(-time.Minute), "old")
+	if err := dev.Save(&auth.Tokens{AccessToken: expired, RefreshToken: "refresh-0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, err := auth.GetToken()
+	if err != nil {
+		t.Fatalf("GetToken() error: %v", err)
+	}
+	if stored := readTokens(t, dev.FilePath()); stored.AccessToken != token || stored.RefreshToken != "rotated-refresh-1" {
+		t.Fatalf("dev pair not rotated (refresh=%q)", stored.RefreshToken)
+	}
+	prodAfter, err := os.ReadFile(prodPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(prodBefore, prodAfter) {
+		t.Fatal("prod credentials changed by a dev refresh")
+	}
+	if _, err := os.Stat(prodPath + ".lock"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dev refresh touched prod's lock file (stat err %v)", err)
+	}
+
+	viper.Set("api_url", "")
+	if got, err := auth.GetToken(); err != nil || got != prodTok {
+		t.Fatalf("GetToken() for prod after a dev refresh = %v, want the prod token", err)
+	}
+}
+
+// Credentials written at ~/.weside/credentials.json before per-environment
+// storage stay prod's login: no re-login after the upgrade.
+func TestLegacyProdCredentialsStillServeProd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("WESIDE_TOKEN", "")
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	path := filepath.Join(home, ".weside", "credentials.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"access_token":"legacy-prod"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := auth.GetToken(); err != nil || got != "legacy-prod" {
+		t.Fatalf("GetToken() = %q, %v; want legacy-prod", got, err)
+	}
+	viper.Set("api_url", "https://staging.api.weside.ai")
+	if _, err := auth.GetToken(); err == nil || !strings.Contains(err.Error(), "not logged in to staging") {
+		t.Fatalf("GetToken() for staging = %v, want not logged in to staging", err)
+	}
+}
+
+func TestEnvironment(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://api.weside.ai":         "prod",
+		"https://api.weside.ai/":        "prod",
+		"https://API.weside.ai":         "prod",
+		"https://staging.api.weside.ai": "staging",
+		"http://localhost:8000":         "dev",
+		"http://127.0.0.1:8001":         "dev",
+		"http://[::1]:8000":             "dev",
+		"https://dev.mobile.weside.ai":  "dev.mobile.weside.ai",
+		"https://api.weside.ai:8443":    "api.weside.ai_8443",
+		"https://evil.example/../x":     "evil.example",
+		"":                              "custom",
+		"not a url":                     "custom",
+	} {
+		if got := auth.Environment(in); got != want {
+			t.Errorf("Environment(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
