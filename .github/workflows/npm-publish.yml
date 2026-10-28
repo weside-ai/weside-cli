@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "26"
           # NOTE: Do NOT set registry-url here!
           # It writes .npmrc with ${NODE_AUTH_TOKEN} placeholder,
           # which prevents npm from falling back to OIDC authentication.
