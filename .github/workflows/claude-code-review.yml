@@ -88,7 +88,7 @@ jobs:
         # A crash must not stop the gate step; the gate then finds no verdict
         # and fails, instead of passing an unreviewed PR.
         continue-on-error: true
-        uses: anthropics/claude-code-action@6d5ae526d25ce88daa2200be073e1a373167f064 # v1.0.265
+        uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Agent PRs come from the GitHub App weside-agent[bot] since 2026-10-04 (WA-2424); without this the
