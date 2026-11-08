@@ -36,9 +36,9 @@ func TestCommandTreeHasNoDuplicateNames(t *testing.T) {
 	walk(rootCmd)
 }
 
-// runRoot executes the real tree and returns its output; it fails the test on
-// an error. Global state the run touches is restored.
-func runRoot(t *testing.T, args ...string) string {
+// runRootErr executes the real tree and returns its output and error. Global
+// state the run touches is restored.
+func runRootErr(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	prevOut, prevErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
@@ -50,10 +50,18 @@ func runRoot(t *testing.T, args ...string) string {
 		rootCmd.SetArgs(nil)
 	})
 	rootCmd.SetArgs(args)
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("%v: %v\n%s", args, err, out.String())
+	err := rootCmd.Execute()
+	return out.String(), err
+}
+
+// runRoot is runRootErr for a run that must succeed.
+func runRoot(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := runRootErr(t, args...)
+	if err != nil {
+		t.Fatalf("%v: %v\n%s", args, err, out)
 	}
-	return out.String()
+	return out
 }
 
 // AC 1: the help of the one `identity` command lists its subcommands.
@@ -143,18 +151,7 @@ func TestCompanionsIdentityWithoutSubcommandStillLoadsViaMCP(t *testing.T) {
 
 // A mistyped subcommand is an error, not a silent MCP identity load.
 func TestCompanionsIdentityRejectsUnknownSubcommand(t *testing.T) {
-	var out bytes.Buffer
-	prevOut, prevErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&out)
-	t.Cleanup(func() {
-		rootCmd.SetOut(prevOut)
-		rootCmd.SetErr(prevErr)
-		rootCmd.SetArgs(nil)
-	})
-	rootCmd.SetArgs([]string{"companions", "identity", "shw", "42"})
-
-	err := rootCmd.Execute()
+	_, err := runRootErr(t, "companions", "identity", "shw", "42")
 	if err == nil || !strings.Contains(err.Error(), `unknown command "shw"`) {
 		t.Fatalf("err = %v, want unknown command \"shw\"", err)
 	}

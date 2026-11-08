@@ -449,7 +449,10 @@ var companionsIdentityCmd = &cobra.Command{
 
 The subcommands read or update the companion's identity prompt:
   identity show <companion>
-  identity set <companion> --file F|-`,
+  identity set <companion> --file F|-
+
+--companion applies to the bare identity load only; show and set take the
+companion as an argument.`,
 	// NoArgs turns a mistyped subcommand into "unknown command" instead of a
 	// silent MCP identity load.
 	Args: cobra.NoArgs,
