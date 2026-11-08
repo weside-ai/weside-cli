@@ -445,6 +445,17 @@ var identityCompanion string
 var companionsIdentityCmd = &cobra.Command{
 	Use:   "identity",
 	Short: "Load the selected Companion's full identity via MCP",
+	Long: `Load the selected Companion's full identity via MCP.
+
+The subcommands read or update the companion's identity prompt:
+  identity show <companion>
+  identity set <companion> --file F|-
+
+--companion applies to the bare identity load only; show and set take the
+companion as an argument.`,
+	// NoArgs turns a mistyped subcommand into "unknown command" instead of a
+	// silent MCP identity load.
+	Args: cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := newPinnedMCPClient(identityCompanion)
 		if err != nil {

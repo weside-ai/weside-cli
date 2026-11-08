@@ -180,11 +180,10 @@ var promptsRestoreCmd = &cobra.Command{
 }
 
 // --- identity-prompt -------------------------------------------------------
-
-var companionIdentityCmd = &cobra.Command{
-	Use:   "identity",
-	Short: "Read or update a companion's identity prompt",
-}
+//
+// `show` and `set` hang under companionsIdentityCmd (companions.go): one
+// `identity` command, so cobra never has two siblings of the same name
+// (WA-2955).
 
 var identityShowCmd = &cobra.Command{
 	Use:   "show <companion>",
@@ -347,9 +346,8 @@ func init() {
 	companionPromptsCmd.AddCommand(promptsVersionsCmd)
 	companionPromptsCmd.AddCommand(promptsShowCmd)
 	companionPromptsCmd.AddCommand(promptsRestoreCmd)
-	companionsCmd.AddCommand(companionIdentityCmd)
-	companionIdentityCmd.AddCommand(identityShowCmd)
-	companionIdentityCmd.AddCommand(identitySetCmd)
+	companionsIdentityCmd.AddCommand(identityShowCmd)
+	companionsIdentityCmd.AddCommand(identitySetCmd)
 	companionsCmd.AddCommand(companionToolsCmd)
 	companionToolsCmd.AddCommand(toolsListCmd)
 	companionToolsCmd.AddCommand(toolsSetCmd)
