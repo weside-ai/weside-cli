@@ -2,8 +2,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -44,7 +46,7 @@ var rootCmd = &cobra.Command{
 	// needs in its own error.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
-		return nil
+		return refuseEmptyAPIURL(cmd)
 	},
 	Short: "CLI for the weside.ai AI Companion Platform",
 	Long: `weside is a command-line interface for interacting with your AI Companions
@@ -109,6 +111,25 @@ func initConfig() {
 	}
 
 	_ = viper.ReadInConfig()
+}
+
+// refuseEmptyAPIURL stops every command whose --api-url (or WESIDE_API_URL)
+// was given but is empty. Without it, `--api-url "$API_URL"` with an unset
+// variable is indistinguishable from no flag at all: viper falls through to
+// the config file or DefaultAPIURL, and the command runs against production
+// with the stored login (Q699: two test files landed in a real prod account).
+// Only a flag that is absent keeps the fallback.
+func refuseEmptyAPIURL(cmd *cobra.Command) error {
+	if f := cmd.Flags().Lookup("api-url"); f != nil && f.Changed {
+		if strings.TrimSpace(f.Value.String()) == "" {
+			return errors.New("--api-url is set but empty; refusing to fall back to the stored login")
+		}
+		return nil
+	}
+	if v, ok := os.LookupEnv("WESIDE_API_URL"); ok && strings.TrimSpace(v) == "" {
+		return errors.New("WESIDE_API_URL is set but empty; refusing to fall back to the stored login")
+	}
+	return nil
 }
 
 // GetAPIURL returns the configured API base URL.
